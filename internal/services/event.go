@@ -91,7 +91,7 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 
 	var (
 		allEvents      []models.AlertCurEvent
-		filteredEvents []models.AlertCurEvent
+		filteredEvents []types.ResponseAlertCurEvent
 		curTime        = time.Now()
 	)
 	for _, alert := range center {
@@ -126,11 +126,13 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			continue
 		}
 
-		if !matchStatus(&event, r.Status, mute.MuteParams{TenantId: r.TenantId, FaultCenterId: event.FaultCenterId, Labels: event.Labels}) {
+		isSilenced := mute.IsSilence(mute.MuteParams{TenantId: r.TenantId, FaultCenterId: event.FaultCenterId, Labels: event.Labels})
+		view := buildCurrentEventResponse(event, isSilenced)
+		if !matchCurrentEvent(view, r) {
 			continue
 		}
 
-		filteredEvents = append(filteredEvents, event)
+		filteredEvents = append(filteredEvents, view)
 	}
 
 	sort.Slice(filteredEvents, func(i, j int) bool {
@@ -187,41 +189,45 @@ func matchQuery(event models.AlertCurEvent, query string) bool {
 	return false
 }
 
-func matchStatus(event *models.AlertCurEvent, status string, muteParams mute.MuteParams) bool {
-	if status == "" {
-		if event.ConfirmState.IsOk {
-			event.Status = "processing"
-		}
-		if mute.IsSilence(muteParams) {
-			event.Status = "muting"
-		}
-		return true
+func buildCurrentEventResponse(event models.AlertCurEvent, silenced bool) types.ResponseAlertCurEvent {
+	lifecycleStatus := event.Status
+	displayStatus := lifecycleStatus
+	if event.ConfirmState.IsOk {
+		displayStatus = models.AlertStatus("processing")
+	}
+	if silenced {
+		displayStatus = models.AlertStatus("muting")
 	}
 
-	switch status {
-	case "pre_alert", "alerting", "pending_recovery":
-		if event.ConfirmState.IsOk {
-			event.Status = "processing"
-		}
-		if mute.IsSilence(muteParams) {
-			event.Status = "muting"
-		}
-		return string(event.Status) == status
-	case "processing":
-		if event.ConfirmState.IsOk {
-			event.Status = "processing"
-			return true
-		}
-		return false
-	case "muting":
-		if mute.IsSilence(muteParams) {
-			event.Status = "muting"
-			return true
-		}
-		return false
-	default:
-		return true
+	view := types.ResponseAlertCurEvent{
+		AlertCurEvent:   event,
+		LifecycleStatus: lifecycleStatus,
+		Acknowledged:    event.ConfirmState.IsOk,
+		Silenced:        silenced,
 	}
+	// Existing clients still receive processing/muting through status, but the
+	// cached lifecycle state is never overwritten.
+	view.Status = displayStatus
+	return view
+}
+
+func matchCurrentEvent(event types.ResponseAlertCurEvent, query *types.RequestAlertCurEventQuery) bool {
+	if event.LifecycleStatus == models.StateRecovered && !query.IncludeRecovered {
+		return false
+	}
+	if query.LifecycleStatus != "" && string(event.LifecycleStatus) != query.LifecycleStatus {
+		return false
+	}
+	if query.Acknowledged != nil && event.Acknowledged != *query.Acknowledged {
+		return false
+	}
+	if query.Silenced != nil && event.Silenced != *query.Silenced {
+		return false
+	}
+	if query.Status != "" && string(event.Status) != query.Status {
+		return false
+	}
+	return true
 }
 
 func (e eventService) ListHistoryEvent(req interface{}) (interface{}, interface{}) {
@@ -235,23 +241,23 @@ func (e eventService) ListHistoryEvent(req interface{}) (interface{}, interface{
 
 }
 
-func pageSlice(data []models.AlertCurEvent, index, size int) []models.AlertCurEvent {
+func pageSlice(data []types.ResponseAlertCurEvent, index, size int) []types.ResponseAlertCurEvent {
 	if index <= 0 {
 		index = 1
 	}
 
 	if size <= 0 {
-		index = 10
+		size = 10
 	}
 
 	total := len(data)
 	if total == 0 {
-		return []models.AlertCurEvent{}
+		return []types.ResponseAlertCurEvent{}
 	}
 
 	offset := (index - 1) * size
 	if offset >= total {
-		return []models.AlertCurEvent{}
+		return []types.ResponseAlertCurEvent{}
 	}
 
 	limit := index * size

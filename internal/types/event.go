@@ -13,24 +13,37 @@ type RequestProcessAlertEvent struct {
 
 // RequestAlertCurEventQuery 请求活跃告警事件
 type RequestAlertCurEventQuery struct {
-	TenantId       string `json:"tenantId" form:"tenantId"`
-	RuleId         string `json:"ruleId" form:"ruleId"`
-	RuleName       string `json:"ruleName" form:"ruleName"`
-	DatasourceType string `json:"datasourceType" form:"datasourceType"`
-	DatasourceId   string `json:"datasourceId" form:"datasourceId"`
-	Fingerprint    string `json:"fingerprint" form:"fingerprint"`
-	Query          string `json:"query" form:"query"`
-	Scope          int64  `json:"scope" form:"scope"`
-	Severity       string `json:"severity" form:"severity"`
-	FaultCenterId  string `json:"faultCenterId" form:"faultCenterId"`
-	Status         string `json:"status" form:"status"`
-	SortOrder      string `json:"sortOrder" form:"sortOrder"`
+	TenantId        string `json:"tenantId" form:"tenantId"`
+	RuleId          string `json:"ruleId" form:"ruleId"`
+	RuleName        string `json:"ruleName" form:"ruleName"`
+	DatasourceType  string `json:"datasourceType" form:"datasourceType"`
+	DatasourceId    string `json:"datasourceId" form:"datasourceId"`
+	Fingerprint     string `json:"fingerprint" form:"fingerprint"`
+	Query           string `json:"query" form:"query"`
+	Scope           int64  `json:"scope" form:"scope"`
+	Severity        string `json:"severity" form:"severity"`
+	FaultCenterId   string `json:"faultCenterId" form:"faultCenterId"`
+	Status          string `json:"status" form:"status"`
+	LifecycleStatus string `json:"lifecycleStatus" form:"lifecycleStatus"`
+	Acknowledged    *bool  `json:"acknowledged" form:"acknowledged"`
+	Silenced        *bool  `json:"silenced" form:"silenced"`
+	IncludeRecovered bool  `json:"includeRecovered" form:"includeRecovered"`
+	SortOrder       string `json:"sortOrder" form:"sortOrder"`
 	models.Page
+}
+
+// ResponseAlertCurEvent exposes independent alert lifecycle, acknowledgement
+// and suppression dimensions while keeping the legacy status field available.
+type ResponseAlertCurEvent struct {
+	models.AlertCurEvent
+	LifecycleStatus models.AlertStatus `json:"lifecycle_status"`
+	Acknowledged    bool               `json:"acknowledged"`
+	Silenced        bool               `json:"silenced"`
 }
 
 // ResponseAlertCurEventList 返回活跃告警列表
 type ResponseAlertCurEventList struct {
-	List []models.AlertCurEvent `json:"list"`
+	List []ResponseAlertCurEvent `json:"list"`
 	models.Page
 }
 
