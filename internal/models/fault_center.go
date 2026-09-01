@@ -1,6 +1,8 @@
 package models
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 )
@@ -12,23 +14,54 @@ const (
 )
 
 type FaultCenter struct {
-	TenantId              string          `json:"tenantId"`
-	ID                    string          `json:"id"`
-	Name                  string          `json:"name"`
-	Description           string          `json:"description"`
-	NoticeIds             []string        `json:"noticeIds" gorm:"column:noticeIds;serializer:json"`
-	NoticeRoutes          []NoticeRoute   `json:"noticeRoutes" gorm:"noticeRoutes;serializer:json"`
-	RepeatNoticeInterval  map[string]int  `json:"repeatNoticeInterval" gorm:"repeatNoticeInterval;serializer:json"`
-	RecoverNotify         *bool           `json:"recoverNotify"`
-	AggregationType       string          `json:"aggregationType"`
-	CreateAt              int64           `json:"createAt"`
-	RecoverWaitTime       int64           `json:"recoverWaitTime"` // 告警恢复等待时间，单位（秒）
-	CurrentPreAlertNumber int64           `json:"currentPreAlertNumber" gorm:"-"`
-	CurrentAlertNumber    int64           `json:"currentAlertNumber" gorm:"-"`
-	CurrentRecoverNumber  int64           `json:"currentRecoverNumber" gorm:"-"`
-	IsUpgradeEnabled      *bool           `json:"isUpgradeEnabled" gorm:"column:isUpgradeEnabled"`
-	UpgradableSeverity    []string        `json:"upgradableSeverity" gorm:"column:upgradableSeverity;serializer:json"`
-	UpgradeStrategy       UpgradeStrategy `json:"upgradeStrategy" gorm:"column:upgradeStrategy;serializer:json"`
+	TenantId              string                `json:"tenantId"`
+	ID                    string                `json:"id"`
+	Name                  string                `json:"name"`
+	Description           string                `json:"description"`
+	NoticeIds             []string              `json:"noticeIds" gorm:"column:noticeIds;serializer:json"`
+	NoticeRoutes          []NoticeRoute         `json:"noticeRoutes" gorm:"noticeRoutes;serializer:json"`
+	RepeatNoticeInterval  RepeatNoticeIntervals `json:"repeatNoticeInterval" gorm:"repeatNoticeInterval;serializer:json"`
+	RecoverNotify         *bool                 `json:"recoverNotify"`
+	AggregationType       string                `json:"aggregationType"`
+	CreateAt              int64                 `json:"createAt"`
+	RecoverWaitTime       int64                 `json:"recoverWaitTime"` // 告警恢复等待时间，单位（秒）
+	CurrentPreAlertNumber int64                 `json:"currentPreAlertNumber" gorm:"-"`
+	CurrentAlertNumber    int64                 `json:"currentAlertNumber" gorm:"-"`
+	CurrentRecoverNumber  int64                 `json:"currentRecoverNumber" gorm:"-"`
+	IsUpgradeEnabled      *bool                 `json:"isUpgradeEnabled" gorm:"column:isUpgradeEnabled"`
+	UpgradableSeverity    []string              `json:"upgradableSeverity" gorm:"column:upgradableSeverity;serializer:json"`
+	UpgradeStrategy       UpgradeStrategy       `json:"upgradeStrategy" gorm:"column:upgradeStrategy;serializer:json"`
+}
+
+// RepeatNoticeIntervals supports both the current per-severity JSON object and
+// the legacy numeric value stored by earlier WatchAlert releases. The legacy
+// value applied to every severity, so it is expanded without changing behavior.
+type RepeatNoticeIntervals map[string]int
+
+func (intervals *RepeatNoticeIntervals) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		*intervals = nil
+		return nil
+	}
+
+	var bySeverity map[string]int
+	if err := json.Unmarshal(data, &bySeverity); err == nil {
+		*intervals = bySeverity
+		return nil
+	}
+
+	var legacyInterval int
+	if err := json.Unmarshal(data, &legacyInterval); err == nil {
+		*intervals = RepeatNoticeIntervals{
+			"P0": legacyInterval,
+			"P1": legacyInterval,
+			"P2": legacyInterval,
+		}
+		return nil
+	}
+
+	return fmt.Errorf("repeatNoticeInterval must be a number or severity map")
 }
 
 func (f *FaultCenter) GetRepeatNoticeInterval(level string) int {
