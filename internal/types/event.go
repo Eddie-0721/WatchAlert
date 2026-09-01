@@ -23,6 +23,11 @@ type RequestAlertCurEventQuery struct {
 	Scope           int64  `json:"scope" form:"scope"`
 	Severity        string `json:"severity" form:"severity"`
 	FaultCenterId   string `json:"faultCenterId" form:"faultCenterId"`
+	Environment     string `json:"environment" form:"environment"`
+	Service         string `json:"service" form:"service"`
+	Cluster         string `json:"cluster" form:"cluster"`
+	Namespace       string `json:"namespace" form:"namespace"`
+	Instance        string `json:"instance" form:"instance"`
 	Status          string `json:"status" form:"status"`
 	LifecycleStatus string `json:"lifecycleStatus" form:"lifecycleStatus"`
 	Acknowledged    *bool  `json:"acknowledged" form:"acknowledged"`
@@ -32,6 +37,19 @@ type RequestAlertCurEventQuery struct {
 	models.Page
 }
 
+// AlertScope is the human-oriented identity extracted from event labels.
+// Labels remain the source of truth; this view makes the common operational
+// dimensions stable for alert lists, filters and response handoffs.
+type AlertScope struct {
+	Environment string `json:"environment"`
+	Service     string `json:"service"`
+	Cluster     string `json:"cluster"`
+	Namespace   string `json:"namespace"`
+	Resource    string `json:"resource"`
+	Instance    string `json:"instance"`
+	Owner       string `json:"owner"`
+}
+
 // ResponseAlertCurEvent exposes independent alert lifecycle, acknowledgement
 // and suppression dimensions while keeping the legacy status field available.
 type ResponseAlertCurEvent struct {
@@ -39,6 +57,8 @@ type ResponseAlertCurEvent struct {
 	LifecycleStatus models.AlertStatus `json:"lifecycle_status"`
 	Acknowledged    bool               `json:"acknowledged"`
 	Silenced        bool               `json:"silenced"`
+	FaultCenterName string             `json:"faultCenterName"`
+	Scope           AlertScope         `json:"scope"`
 }
 
 // ResponseAlertCurEventList 返回活跃告警列表

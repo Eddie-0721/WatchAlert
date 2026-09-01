@@ -32,7 +32,9 @@ func (e EventRepo) GetHistoryEvent(r types.RequestAlertHisEventQuery) (types.Res
 
 	db := e.DB().Model(&models.AlertHisEvent{})
 	db.Where("tenant_id = ?", r.TenantId)
-	db.Where("fault_center_id = ?", r.FaultCenterId)
+	if r.FaultCenterId != "" {
+		db.Where("fault_center_id = ?", r.FaultCenterId)
+	}
 
 	if r.Query != "" {
 		db.Where("rule_name LIKE ? OR severity LIKE ? OR annotations LIKE ? OR fingerprint LIKE ?", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%")

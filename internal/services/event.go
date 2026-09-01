@@ -84,18 +84,30 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 		return nil, fmt.Errorf("invalid request type: expected *models.AlertCurEventQuery")
 	}
 
-	center, err := e.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(r.TenantId, r.FaultCenterId))
-	if err != nil {
-		return nil, err
-	}
-
 	var (
 		allEvents      []models.AlertCurEvent
 		filteredEvents []types.ResponseAlertCurEvent
 		curTime        = time.Now()
 	)
-	for _, alert := range center {
-		allEvents = append(allEvents, *alert)
+
+	centers, err := e.ctx.DB.FaultCenter().List(r.TenantId, "")
+	if err != nil {
+		return nil, err
+	}
+	centerNames := make(map[string]string, len(centers))
+	for _, center := range centers {
+		centerNames[center.ID] = center.Name
+		if r.FaultCenterId != "" && center.ID != r.FaultCenterId {
+			continue
+		}
+
+		events, err := e.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(r.TenantId, center.ID))
+		if err != nil {
+			return nil, err
+		}
+		for _, alert := range events {
+			allEvents = append(allEvents, *alert)
+		}
 	}
 
 	var form int64
@@ -118,7 +130,7 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			continue
 		}
 
-		if r.FaultCenterId != "" && !strings.Contains(event.FaultCenterId, r.FaultCenterId) {
+		if r.FaultCenterId != "" && event.FaultCenterId != r.FaultCenterId {
 			continue
 		}
 
@@ -128,6 +140,8 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 
 		isSilenced := mute.IsSilence(mute.MuteParams{TenantId: r.TenantId, FaultCenterId: event.FaultCenterId, Labels: event.Labels})
 		view := buildCurrentEventResponse(event, isSilenced)
+		view.FaultCenterName = centerNames[event.FaultCenterId]
+		view.Scope = buildAlertScope(event.Labels)
 		if !matchCurrentEvent(view, r) {
 			continue
 		}
@@ -152,7 +166,7 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			}
 		default:
 			if a.FirstTriggerTime != b.FirstTriggerTime {
-				return a.Fingerprint < b.Fingerprint
+				return a.FirstTriggerTime > b.FirstTriggerTime
 			}
 		}
 
@@ -227,7 +241,52 @@ func matchCurrentEvent(event types.ResponseAlertCurEvent, query *types.RequestAl
 	if query.Status != "" && string(event.Status) != query.Status {
 		return false
 	}
+	if query.Environment != "" && !matchesScope(event.Scope.Environment, query.Environment) {
+		return false
+	}
+	if query.Service != "" && !matchesScope(event.Scope.Service, query.Service) {
+		return false
+	}
+	if query.Cluster != "" && !matchesScope(event.Scope.Cluster, query.Cluster) {
+		return false
+	}
+	if query.Namespace != "" && !matchesScope(event.Scope.Namespace, query.Namespace) {
+		return false
+	}
+	if query.Instance != "" && !matchesScope(event.Scope.Instance, query.Instance) {
+		return false
+	}
 	return true
+}
+
+func matchesScope(value, query string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(query))
+}
+
+func buildAlertScope(labels map[string]interface{}) types.AlertScope {
+	return types.AlertScope{
+		Environment: labelValue(labels, "environment", "env", "stage", "deployment_environment"),
+		Service:     labelValue(labels, "service", "app", "application", "job"),
+		Cluster:     labelValue(labels, "cluster", "cluster_name", "kubernetes_cluster"),
+		Namespace:   labelValue(labels, "namespace", "kubernetes_namespace", "k8s_namespace"),
+		Resource:    labelValue(labels, "resource_name", "resource", "pod", "node", "host", "instance"),
+		Instance:    labelValue(labels, "instance", "pod", "node", "host", "endpoint"),
+		Owner:       labelValue(labels, "owner", "team", "service_owner"),
+	}
+}
+
+func labelValue(labels map[string]interface{}, aliases ...string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	for _, alias := range aliases {
+		for key, value := range labels {
+			if strings.EqualFold(key, alias) {
+				return strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+	}
+	return ""
 }
 
 func (e eventService) ListHistoryEvent(req interface{}) (interface{}, interface{}) {

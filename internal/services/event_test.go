@@ -68,3 +68,21 @@ func TestPageSliceUsesDefaultPageSize(t *testing.T) {
 		t.Fatalf("expected default page size 10, got %d", got)
 	}
 }
+
+func TestBuildAlertScopeUsesCommonLabelAliases(t *testing.T) {
+	scope := buildAlertScope(map[string]interface{}{
+		"env":       "prod",
+		"app":       "payments",
+		"cluster":   "cn-prod-01",
+		"namespace": "payments",
+		"pod":       "payments-7f9c",
+		"team":      "commerce",
+	})
+
+	if scope.Environment != "prod" || scope.Service != "payments" || scope.Cluster != "cn-prod-01" {
+		t.Fatalf("unexpected core scope: %#v", scope)
+	}
+	if scope.Namespace != "payments" || scope.Resource != "payments-7f9c" || scope.Owner != "commerce" {
+		t.Fatalf("unexpected derived scope: %#v", scope)
+	}
+}
