@@ -86,6 +86,10 @@ func NewDBClient(dbcfg DBConfig) *gorm.DB {
 		&models.PrometheusTargetGroup{},
 		&models.PrometheusTarget{},
 		&models.PrometheusTargetVersion{},
+		&models.AgentSession{},
+		&models.AgentMessage{},
+		&models.AgentToolCall{},
+		&models.AgentPendingAction{},
 	)
 	if err != nil {
 		logc.Error(context.Background(), err.Error())

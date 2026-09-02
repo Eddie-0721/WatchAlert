@@ -2,6 +2,9 @@ package models
 
 // AuditEventMap 审计日志接口与事件名称映射表（使用完整API路径作为key）
 var AuditEventMap = map[string]string{
+	"/api/w8t/agent/sessionCreate":  "创建 Copilot 会话",
+	"/api/w8t/agent/sessionMessage": "发送 Copilot 消息",
+	"/api/w8t/agent/actionConfirm":  "确认 Copilot 操作",
 	// ========== 用户相关 ==========
 	"/api/w8t/user/userUpdate":     "更新用户",
 	"/api/w8t/user/userDelete":     "删除用户",
@@ -128,11 +131,11 @@ var AuditEventMap = map[string]string{
 	"/api/w8t/ai/chat": "AI对话",
 
 	// ========== 服务发现相关 ==========
-	"/api/w8t/prometheus/targetGroupCreate": "创建服务组",
-	"/api/w8t/prometheus/targetGroupUpdate": "更新服务组",
-	"/api/w8t/prometheus/targetGroupDelete": "删除服务组",
-	"/api/w8t/prometheus/targetCreate":     "创建服务",
-	"/api/w8t/prometheus/targetUpdate":     "更新服务",
-	"/api/w8t/prometheus/targetDelete":     "删除服务",
+	"/api/w8t/prometheus/targetGroupCreate":     "创建服务组",
+	"/api/w8t/prometheus/targetGroupUpdate":     "更新服务组",
+	"/api/w8t/prometheus/targetGroupDelete":     "删除服务组",
+	"/api/w8t/prometheus/targetCreate":          "创建服务",
+	"/api/w8t/prometheus/targetUpdate":          "更新服务",
+	"/api/w8t/prometheus/targetDelete":          "删除服务",
 	"/api/w8t/prometheus/targetVersionRollback": "回滚服务版本",
 }

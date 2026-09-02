@@ -25,3 +25,10 @@ Redis:
 Jwt:
   # 失效时间
   expire: 18000
+
+# Copilot Agent 服务仅接受内网调用。请在生产环境通过 Secret 注入
+# internalToken，切勿将真实值提交到 Git。
+Agent:
+  url: ""
+  internalToken: ""
+  timeout: 60

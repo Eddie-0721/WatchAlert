@@ -40,6 +40,8 @@ var (
 	RecordingRuleService      InterRecordingRuleService
 	RecordingRuleGroupService InterRecordingRuleGroupService
 	PrometheusService         InterPrometheusService
+	AgentService              InterAgentService
+	AgentToolService          InterAgentToolService
 )
 
 func NewServices(ctx *ctx.Context) {
@@ -76,4 +78,6 @@ func NewServices(ctx *ctx.Context) {
 	RecordingRuleService = newInterRecordingRuleService(ctx)
 	RecordingRuleGroupService = newInterRecordingRuleGroupService(ctx)
 	PrometheusService = newInterPrometheusService(ctx)
+	AgentService = newInterAgentService(ctx)
+	AgentToolService = newInterAgentToolService(ctx)
 }

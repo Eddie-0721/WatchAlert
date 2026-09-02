@@ -16,6 +16,7 @@ type (
 	InterDatasourceRepo interface {
 		List(tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error)
 		Get(datasourceId string) (models.AlertDataSource, error)
+		GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error)
 		Create(r models.AlertDataSource) error
 		Update(r models.AlertDataSource) error
 		Delete(tenantId, datasourceId string) error
@@ -71,6 +72,17 @@ func (ds DatasourceRepo) Get(datasourceId string) (models.AlertDataSource, error
 	}
 
 	return data, nil
+}
+
+// GetForTenant is the only lookup that may be used by an Agent Tool. The old
+// Get method is kept for compatibility with legacy callers, but it must never
+// be used for a user-scoped data source request.
+func (ds DatasourceRepo) GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error) {
+	var data models.AlertDataSource
+	err := ds.db.Model(&models.AlertDataSource{}).
+		Where("tenant_id = ? AND id = ?", tenantId, datasourceId).
+		First(&data).Error
+	return data, err
 }
 
 func (ds DatasourceRepo) Create(r models.AlertDataSource) error {

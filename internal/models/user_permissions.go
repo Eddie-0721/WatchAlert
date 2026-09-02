@@ -7,6 +7,50 @@ type UserPermissions struct {
 
 func PermissionsInfo() map[string]UserPermissions {
 	return map[string]UserPermissions{
+		"agentCapabilities": {
+			Key: "查看 Copilot 能力",
+			API: "/api/w8t/agent/capabilities",
+		},
+		"agentSessionList": {
+			Key: "查看 Copilot 会话",
+			API: "/api/w8t/agent/sessionList",
+		},
+		"agentSessionGet": {
+			Key: "查看 Copilot 会话详情",
+			API: "/api/w8t/agent/sessionGet",
+		},
+		"agentSessionCreate": {
+			Key: "创建 Copilot 会话",
+			API: "/api/w8t/agent/sessionCreate",
+		},
+		"agentSessionMessage": {
+			Key: "发送 Copilot 消息",
+			API: "/api/w8t/agent/sessionMessage",
+		},
+		"agentActionConfirm": {
+			Key: "确认 Copilot 操作",
+			API: "/api/w8t/agent/actionConfirm",
+		},
+		"eventCurRead": {
+			Key: "查看当前告警",
+			API: "/api/w8t/event/curEvent",
+		},
+		"eventHisRead": {
+			Key: "查看历史告警",
+			API: "/api/w8t/event/hisEvent",
+		},
+		"eventProcess": {
+			Key: "认领告警",
+			API: "/api/w8t/event/process",
+		},
+		"promQuery": {
+			Key: "查询 Prometheus 指标",
+			API: "/api/w8t/datasource/promQuery",
+		},
+		"promQueryRange": {
+			Key: "查询 Prometheus 指标趋势",
+			API: "/api/w8t/datasource/promQueryRange",
+		},
 		"ruleSearch": {
 			Key: "预览告警规则详情",
 			API: "/api/w8t/rule/ruleSearch",

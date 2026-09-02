@@ -55,6 +55,7 @@ func (datasourceController datasourceController) API(gin *gin.RouterGroup) {
 	c := gin.Group("datasource")
 	c.Use(
 		middleware.Auth(),
+		middleware.Permission(),
 		middleware.ParseTenant(),
 	)
 	{
@@ -147,7 +148,8 @@ func (datasourceController datasourceController) PromQuery(ctx *gin.Context) {
 		ids = strings.Split(r.DatasourceIds, ",")
 		for _, id := range ids {
 			var res provider.QueryResponse
-			source, err := ctx2.DO().DB.Datasource().Get(id)
+			tid, _ := ctx.Get("TenantID")
+			source, err := ctx2.DO().DB.Datasource().GetForTenant(tid.(string), id)
 			if err != nil {
 				return nil, err
 			}
@@ -201,7 +203,8 @@ func (datasourceController datasourceController) PromQueryRange(ctx *gin.Context
 
 		for _, id := range ids {
 			var res provider.QueryResponse
-			source, err := ctx2.DO().DB.Datasource().Get(id)
+			tid, _ := ctx.Get("TenantID")
+			source, err := ctx2.DO().DB.Datasource().GetForTenant(tid.(string), id)
 			if err != nil {
 				return nil, err
 			}

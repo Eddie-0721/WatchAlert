@@ -36,6 +36,7 @@ func (alertEventController alertEventController) API(gin *gin.RouterGroup) {
 	b := gin.Group("event")
 	b.Use(
 		middleware.Auth(),
+		middleware.Permission(),
 		middleware.ParseTenant(),
 	)
 	{

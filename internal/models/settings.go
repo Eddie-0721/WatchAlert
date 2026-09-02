@@ -17,6 +17,7 @@ type Settings struct {
 	AppVersion          string              `json:"appVersion" gorm:"-"`
 	CommunicationConfig communicationConfig `json:"communicationConfig" gorm:"communicationConfig;serializer:json"`
 	AiConfig            AiConfig            `json:"aiConfig" gorm:"aiConfig;serializer:json"`
+	AgentConfig         AgentConfig         `json:"agentConfig" gorm:"agentConfig;serializer:json"`
 	LdapConfig          LdapConfig          `json:"ldapConfig" gorm:"ldapConfig;serializer:json"`
 	OidcConfig          OidcConfig          `json:"oidcConfig" gorm:"oidcConfig;serializer:json"`
 }
@@ -119,6 +120,24 @@ type AiConfig struct {
 	Timeout   int    `json:"timeout"`
 	MaxTokens int    `json:"maxTokens"`
 	Prompt    string `json:"prompt"`
+}
+
+// AgentConfig controls which capabilities are available to the Copilot. It is
+// deliberately separate from AiConfig: AiConfig describes the model provider,
+// while AgentConfig describes the product-level safety boundary.
+type AgentConfig struct {
+	Enable                   *bool    `json:"enable"`
+	AllowedTools             []string `json:"allowedTools"`
+	AllowProductionWrite     *bool    `json:"allowProductionWrite"`
+	RequireWriteConfirmation *bool    `json:"requireWriteConfirmation"`
+}
+
+func (a AgentConfig) GetEnable() bool {
+	return a.Enable != nil && *a.Enable
+}
+
+func (a AgentConfig) GetRequireWriteConfirmation() bool {
+	return a.RequireWriteConfirmation == nil || *a.RequireWriteConfirmation
 }
 
 type LdapConfig struct {

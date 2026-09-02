@@ -12,6 +12,10 @@ type App struct {
 	Redis    Redis    `json:"Redis"`
 	Jwt      Jwt      `json:"Jwt"`
 	Jaeger   Jaeger   `json:"Jaeger"`
+	// Agent contains only the connection settings for the internal Agent
+	// service. Model credentials remain in system settings and are never
+	// returned to the browser.
+	Agent Agent `json:"Agent"`
 }
 
 type Server struct {
@@ -44,6 +48,12 @@ type Jwt struct {
 
 type Jaeger struct {
 	URL string `json:"url"`
+}
+
+type Agent struct {
+	URL           string `json:"url"`
+	InternalToken string `json:"internalToken"`
+	Timeout       int    `json:"timeout"`
 }
 
 var (
