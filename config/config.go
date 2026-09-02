@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"os"
 
 	"github.com/spf13/viper"
 )
@@ -53,6 +54,7 @@ type Jaeger struct {
 type Agent struct {
 	URL           string `json:"url"`
 	InternalToken string `json:"internalToken"`
+	CredentialKey string `json:"credentialKey"`
 	Timeout       int    `json:"timeout"`
 }
 
@@ -72,6 +74,14 @@ func InitConfig(version string) {
 	var config App
 	if err := v.Unmarshal(&config); err != nil {
 		log.Fatal("配置解析失败:", err)
+	}
+	// Secrets can be injected by Docker/Kubernetes without writing them into
+	// config.yaml. Keep the file-based values as a compatibility fallback.
+	if value := os.Getenv("WATCHALERT_AGENT_INTERNAL_TOKEN"); value != "" {
+		config.Agent.InternalToken = value
+	}
+	if value := os.Getenv("WATCHALERT_AGENT_CREDENTIAL_KEY"); value != "" {
+		config.Agent.CredentialKey = value
 	}
 
 	Version = version

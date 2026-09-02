@@ -25,3 +25,11 @@ docker build --build-arg PIP_INDEX_URL=https://<your-pypi-mirror>/simple -t watc
 
 Copilot 的数据源和环境范围由 WatchAlert 系统设置中的 `agentConfig.scope`
 控制，范围会签入短期运行令牌并由 Go Tool Gateway 强制校验。
+
+## 页面配置 DeepSeek
+
+部署 WatchAlert Go 服务时，必须在 `config.yaml` 的 `Agent.credentialKey` 配置一个
+由 Secret 注入的随机密钥。它用于加密管理员在“系统设置 → Copilot Agent”中提交的
+DeepSeek API Key；该 Key 不会回显给浏览器。DeepSeek 使用
+`https://api.deepseek.com` 的 Chat Completions 兼容接口，页面可选择
+`deepseek-v4-flash` 或 `deepseek-v4-pro`。

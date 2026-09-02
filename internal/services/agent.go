@@ -16,6 +16,7 @@ import (
 	"watchAlert/internal/models"
 	"watchAlert/internal/types"
 	"watchAlert/pkg/agenttoken"
+	"watchAlert/pkg/secretbox"
 	"watchAlert/pkg/tools"
 )
 
@@ -76,6 +77,11 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 		Messages: append(detail.Messages, userMessage), Context: req.Context,
 		AllowedTools: capabilities.AllowedTools, Scope: capabilities.Scope,
 	}
+	modelConfig, err := a.modelRuntimeConfig()
+	if err != nil {
+		return err
+	}
+	payload.ModelConfig = modelConfig
 	response, err := callAgentServiceStream(requestCtx, payload, emit)
 	if err != nil {
 		return err
@@ -305,6 +311,11 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 		AllowedTools: capabilities.AllowedTools,
 		Scope:        capabilities.Scope,
 	}
+	modelConfig, err := a.modelRuntimeConfig()
+	if err != nil {
+		return models.AgentMessage{}, err
+	}
+	payload.ModelConfig = modelConfig
 	response, err := callAgentService(requestCtx, payload)
 	if err != nil {
 		return models.AgentMessage{}, err
@@ -328,6 +339,26 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	_ = a.ctx.DB.DB().Model(&models.AgentSession{}).Where("id = ? AND tenant_id = ?", req.SessionId, tenantId).
 		Updates(map[string]interface{}{"updated_at": assistantMessage.CreatedAt, "title": sessionTitle(detail.Session.Title, userMessage.Content)}).Error
 	return assistantMessage, nil
+}
+
+func (a *agentService) modelRuntimeConfig() (types.AgentModelRuntime, error) {
+	settings, err := a.ctx.DB.Setting().Get()
+	if err != nil {
+		return types.AgentModelRuntime{}, err
+	}
+	model := settings.AgentConfig.Model
+	if model.APIKeyEncrypted == "" {
+		// Keep the deployment-environment fallback for existing installations.
+		return types.AgentModelRuntime{}, nil
+	}
+	apiKey, err := secretbox.Decrypt(model.APIKeyEncrypted, config.Application.Agent.CredentialKey)
+	if err != nil {
+		return types.AgentModelRuntime{}, err
+	}
+	if model.Provider != "deepseek" || model.BaseURL == "" || model.Model == "" {
+		return types.AgentModelRuntime{}, fmt.Errorf("Copilot 模型配置不完整")
+	}
+	return types.AgentModelRuntime{Provider: model.Provider, BaseURL: model.BaseURL, Model: model.Model, APIKey: apiKey}, nil
 }
 
 func agentScopeFromSettings(scope models.AgentScope) types.AgentScope {

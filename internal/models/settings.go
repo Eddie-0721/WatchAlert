@@ -126,11 +126,24 @@ type AiConfig struct {
 // deliberately separate from AiConfig: AiConfig describes the model provider,
 // while AgentConfig describes the product-level safety boundary.
 type AgentConfig struct {
-	Enable                   *bool      `json:"enable"`
-	AllowedTools             []string   `json:"allowedTools"`
-	Scope                    AgentScope `json:"scope"`
-	AllowProductionWrite     *bool      `json:"allowProductionWrite"`
-	RequireWriteConfirmation *bool      `json:"requireWriteConfirmation"`
+	Enable                   *bool            `json:"enable"`
+	AllowedTools             []string         `json:"allowedTools"`
+	Scope                    AgentScope       `json:"scope"`
+	Model                    AgentModelConfig `json:"model"`
+	AllowProductionWrite     *bool            `json:"allowProductionWrite"`
+	RequireWriteConfirmation *bool            `json:"requireWriteConfirmation"`
+}
+
+// AgentModelConfig keeps the browser-facing key transient. Only the encrypted
+// value is serialized to the settings database and it is never sent back to a
+// browser response.
+type AgentModelConfig struct {
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"baseURL"`
+	Model           string `json:"model"`
+	APIKey          string `json:"apiKey,omitempty" gorm:"-"`
+	APIKeyEncrypted string `json:"apiKeyEncrypted,omitempty"`
+	APIKeySet       bool   `json:"apiKeySet" gorm:"-"`
 }
 
 // AgentScope is an optional server-side data boundary for Copilot. When a

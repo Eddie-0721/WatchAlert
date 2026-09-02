@@ -53,6 +53,16 @@ type AgentRunRequest struct {
 	Context      map[string]interface{} `json:"context"`
 	AllowedTools []string               `json:"allowedTools"`
 	Scope        AgentScope             `json:"scope"`
+	ModelConfig  AgentModelRuntime      `json:"modelConfig"`
+}
+
+// AgentModelRuntime is sent only from the Go BFF to the internal Agent service
+// over its authenticated network boundary. It is never returned by an API.
+type AgentModelRuntime struct {
+	Provider string `json:"provider"`
+	BaseURL  string `json:"baseURL"`
+	Model    string `json:"model"`
+	APIKey   string `json:"apiKey"`
 }
 
 type AgentRunResponse struct {

@@ -20,11 +20,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 try:
-    from agents import Agent, Runner, function_tool
+    from agents import Agent, OpenAIChatCompletionsModel, Runner, function_tool, set_tracing_disabled
+    from openai import AsyncOpenAI
 except ImportError:  # Health checks can still explain a bad image build.
     Agent = None
+    AsyncOpenAI = None
+    OpenAIChatCompletionsModel = None
     Runner = None
     function_tool = None
+    set_tracing_disabled = None
 
 
 class AgentMessage(BaseModel):
@@ -34,6 +38,13 @@ class AgentMessage(BaseModel):
     evidence: str | None = None
 
 
+class ModelConfig(BaseModel):
+    provider: str = ""
+    baseURL: str = ""
+    model: str = ""
+    apiKey: str = ""
+
+
 class RunRequest(BaseModel):
     sessionId: str
     runToken: str = Field(min_length=1)
@@ -41,6 +52,7 @@ class RunRequest(BaseModel):
     messages: list[AgentMessage] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     allowedTools: list[str] = Field(default_factory=list)
+    modelConfig: ModelConfig = Field(default_factory=ModelConfig)
 
 
 class ToolEvidence(BaseModel):
@@ -71,6 +83,11 @@ run_context: contextvars.ContextVar[RunContext | None] = contextvars.ContextVar(
 )
 
 app = FastAPI(title="WatchAlert Agent", version="0.1.0")
+
+if set_tracing_disabled is not None:
+    # Provider keys configured in WatchAlert must never be submitted to the
+    # default OpenAI tracing endpoint.
+    set_tracing_disabled(True)
 
 
 def setting(name: str, default: str = "") -> str:
@@ -224,14 +241,28 @@ def conversation_input(request: RunRequest) -> str:
     return "\n\n".join(lines)
 
 
-def build_agent(context: RunContext) -> Agent:
+def configured_model(request: RunRequest):
+    config = request.modelConfig
+    if config.apiKey:
+        if config.provider != "deepseek" or config.baseURL.rstrip("/") != "https://api.deepseek.com" or not config.model:
+            raise ValueError("invalid runtime model configuration")
+        if AsyncOpenAI is None or OpenAIChatCompletionsModel is None:
+            raise ValueError("OpenAI-compatible runtime is unavailable")
+        client = AsyncOpenAI(api_key=config.apiKey, base_url=config.baseURL)
+        return OpenAIChatCompletionsModel(model=config.model, openai_client=client)
+    if not setting("OPENAI_API_KEY") or not setting("AGENT_MODEL"):
+        raise ValueError("model provider is not configured")
+    return setting("AGENT_MODEL")
+
+
+def build_agent(context: RunContext, request: RunRequest) -> Agent:
     registered_tools = [watchalert_query]
     if any(".propose_" in item for item in context.allowed_tools) and watchalert_propose_action is not None:
         registered_tools.append(watchalert_propose_action)
     return Agent(
         name="WatchAlert Copilot",
         instructions=build_instructions(context.allowed_tools),
-        model=setting("AGENT_MODEL"),
+        model=configured_model(request),
         tools=registered_tools,
     )
 
@@ -254,13 +285,11 @@ async def run_agent(request: RunRequest, x_watchalert_agent_token: str | None = 
     require_internal_token(x_watchalert_agent_token)
     if Agent is None or Runner is None or watchalert_query is None:
         raise HTTPException(status_code=503, detail="openai-agents runtime is unavailable")
-    if not setting("OPENAI_API_KEY") or not setting("AGENT_MODEL"):
-        raise HTTPException(status_code=503, detail="model provider is not configured")
 
     context = RunContext(token=request.runToken, allowed_tools=set(request.allowedTools))
     context_token = run_context.set(context)
     try:
-        result = await Runner.run(build_agent(context), conversation_input(request))
+        result = await Runner.run(build_agent(context, request), conversation_input(request))
         content = str(result.final_output or "未得到可用分析结果。")
     except Exception as error:  # Model/provider errors are not leaked with secrets.
         raise HTTPException(status_code=502, detail=f"Agent run failed: {str(error)[:300]}") from error
@@ -281,15 +310,13 @@ async def stream_agent(request: RunRequest, x_watchalert_agent_token: str | None
     require_internal_token(x_watchalert_agent_token)
     if Agent is None or Runner is None or watchalert_query is None:
         raise HTTPException(status_code=503, detail="openai-agents runtime is unavailable")
-    if not setting("OPENAI_API_KEY") or not setting("AGENT_MODEL"):
-        raise HTTPException(status_code=503, detail="model provider is not configured")
 
     async def generate():
         context = RunContext(token=request.runToken, allowed_tools=set(request.allowedTools))
         context_token = run_context.set(context)
         try:
             yield sse("status", {"message": "正在分析受控数据…"})
-            result = Runner.run_streamed(build_agent(context), conversation_input(request))
+            result = Runner.run_streamed(build_agent(context, request), conversation_input(request))
             async for event in result.stream_events():
                 if getattr(event, "type", "") != "raw_response_event":
                     continue

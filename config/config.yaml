@@ -31,4 +31,7 @@ Jwt:
 Agent:
   url: ""
   internalToken: ""
+  # 用于加密页面保存的模型 API Key。生产环境请通过 Secret 注入强随机值；
+  # 丢失后已有 API Key 无法解密。
+  credentialKey: ""
   timeout: 60
