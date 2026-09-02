@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -28,8 +29,70 @@ type InterAgentService interface {
 	ListSessions(tenantId, userId string) ([]models.AgentSession, error)
 	Capabilities(tenantId, userId string) (types.AgentCapabilities, error)
 	SendMessage(ctx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage) (models.AgentMessage, error)
+	StreamMessage(ctx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage, emit func(types.AgentStreamEvent)) error
 	ProposeAction(claims agenttoken.Claims, tool string, arguments map[string]interface{}) (models.AgentPendingAction, error)
 	ConfirmAction(tenantId, userId string, req *types.RequestAgentActionConfirm) (models.AgentPendingAction, error)
+}
+
+// StreamMessage persists the user message before calling the isolated Agent
+// service and persists the final assistant reply only after a terminal done
+// event. The browser receives no provider credential or Tool result.
+func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage, emit func(types.AgentStreamEvent)) error {
+	if strings.TrimSpace(req.Content) == "" {
+		return fmt.Errorf("对话内容不能为空")
+	}
+	detail, err := a.GetSession(tenantId, userId, req.SessionId)
+	if err != nil {
+		return err
+	}
+	capabilities, err := a.Capabilities(tenantId, userId)
+	if err != nil {
+		return err
+	}
+	if !capabilities.Enabled {
+		return fmt.Errorf("WatchAlert Copilot 尚未启用")
+	}
+	if config.Application.Agent.URL == "" || config.Application.Agent.InternalToken == "" {
+		return fmt.Errorf("Copilot Agent 服务尚未配置")
+	}
+
+	userMessage := models.AgentMessage{
+		ID: "am-" + tools.RandId(), SessionId: req.SessionId, TenantId: tenantId,
+		Role: "user", Content: strings.TrimSpace(req.Content), CreatedAt: time.Now().Unix(),
+	}
+	if err := a.ctx.DB.DB().Create(&userMessage).Error; err != nil {
+		return err
+	}
+	runToken, err := agenttoken.Sign(agenttoken.Claims{
+		SessionId: req.SessionId, TenantId: tenantId, UserId: userId, Tools: capabilities.AllowedTools,
+		DatasourceIds: capabilities.Scope.DatasourceIds, EnvironmentLabelKey: capabilities.Scope.EnvironmentLabelKey,
+		Environments: capabilities.Scope.Environments, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
+	}, config.Application.Agent.InternalToken)
+	if err != nil {
+		return err
+	}
+	payload := types.AgentRunRequest{
+		SessionId: req.SessionId, RunToken: runToken, Message: userMessage.Content,
+		Messages: append(detail.Messages, userMessage), Context: req.Context,
+		AllowedTools: capabilities.AllowedTools, Scope: capabilities.Scope,
+	}
+	response, err := callAgentServiceStream(requestCtx, payload, emit)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(response.Content) == "" {
+		return fmt.Errorf("Agent 服务未返回分析内容")
+	}
+	assistantMessage := models.AgentMessage{
+		ID: "am-" + tools.RandId(), SessionId: req.SessionId, TenantId: tenantId,
+		Role: "assistant", Content: response.Content, Evidence: response.Evidence, CreatedAt: time.Now().Unix(),
+	}
+	if err := a.ctx.DB.DB().Create(&assistantMessage).Error; err != nil {
+		return err
+	}
+	_ = a.ctx.DB.DB().Model(&models.AgentSession{}).Where("id = ? AND tenant_id = ?", req.SessionId, tenantId).
+		Updates(map[string]interface{}{"updated_at": assistantMessage.CreatedAt, "title": sessionTitle(detail.Session.Title, userMessage.Content)}).Error
+	return nil
 }
 
 func newInterAgentService(ctx *ctx.Context) InterAgentService {
@@ -96,6 +159,7 @@ func (a *agentService) Capabilities(tenantId, userId string) (types.AgentCapabil
 		Enabled:      settings.AgentConfig.GetEnable(),
 		AllowedTools: allowedTools,
 		CanWrite:     hasWriteTool(allowedTools),
+		Scope:        agentScopeFromSettings(settings.AgentConfig.Scope),
 	}, nil
 }
 
@@ -106,6 +170,13 @@ func (a *agentService) ProposeAction(claims agenttoken.Claims, tool string, argu
 	}
 	if !capabilities.Enabled || !agenttoken.Allows(claims, tool) || !containsTool(capabilities.AllowedTools, tool) {
 		return models.AgentPendingAction{}, fmt.Errorf("当前用户无权提出操作 %s", tool)
+	}
+	settings, err := a.ctx.DB.Setting().Get()
+	if err != nil {
+		return models.AgentPendingAction{}, err
+	}
+	if agentScopeContainsProduction(capabilities.Scope) && (settings.AgentConfig.AllowProductionWrite == nil || !*settings.AgentConfig.AllowProductionWrite) {
+		return models.AgentPendingAction{}, fmt.Errorf("当前 Copilot 范围包含生产环境，但未允许生产环境写操作")
 	}
 
 	payload, preview, risk, err := a.buildActionPreview(claims, tool, arguments)
@@ -212,11 +283,14 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	}
 
 	runToken, err := agenttoken.Sign(agenttoken.Claims{
-		SessionId: req.SessionId,
-		TenantId:  tenantId,
-		UserId:    userId,
-		Tools:     capabilities.AllowedTools,
-		ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
+		SessionId:           req.SessionId,
+		TenantId:            tenantId,
+		UserId:              userId,
+		Tools:               capabilities.AllowedTools,
+		DatasourceIds:       capabilities.Scope.DatasourceIds,
+		EnvironmentLabelKey: capabilities.Scope.EnvironmentLabelKey,
+		Environments:        capabilities.Scope.Environments,
+		ExpiresAt:           time.Now().Add(5 * time.Minute).Unix(),
 	}, config.Application.Agent.InternalToken)
 	if err != nil {
 		return models.AgentMessage{}, err
@@ -229,6 +303,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 		Messages:     append(detail.Messages, userMessage),
 		Context:      req.Context,
 		AllowedTools: capabilities.AllowedTools,
+		Scope:        capabilities.Scope,
 	}
 	response, err := callAgentService(requestCtx, payload)
 	if err != nil {
@@ -253,6 +328,30 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	_ = a.ctx.DB.DB().Model(&models.AgentSession{}).Where("id = ? AND tenant_id = ?", req.SessionId, tenantId).
 		Updates(map[string]interface{}{"updated_at": assistantMessage.CreatedAt, "title": sessionTitle(detail.Session.Title, userMessage.Content)}).Error
 	return assistantMessage, nil
+}
+
+func agentScopeFromSettings(scope models.AgentScope) types.AgentScope {
+	return types.AgentScope{
+		DatasourceIds:       uniqueNonEmpty(scope.DatasourceIds),
+		EnvironmentLabelKey: strings.TrimSpace(scope.EnvironmentLabelKey),
+		Environments:        uniqueNonEmpty(scope.Environments),
+	}
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; !exists {
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func callAgentService(ctx context.Context, payload types.AgentRunRequest) (types.AgentRunResponse, error) {
@@ -287,6 +386,85 @@ func callAgentService(ctx context.Context, payload types.AgentRunRequest) (types
 	}
 	if err := json.Unmarshal(content, &result); err != nil {
 		return result, fmt.Errorf("解析 Copilot Agent 响应失败: %w", err)
+	}
+	return result, nil
+}
+
+func callAgentServiceStream(ctx context.Context, payload types.AgentRunRequest, emit func(types.AgentStreamEvent)) (types.AgentRunResponse, error) {
+	var result types.AgentRunResponse
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return result, err
+	}
+	timeout := config.Application.Agent.Timeout
+	if timeout <= 0 {
+		timeout = 60
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(config.Application.Agent.URL, "/")+"/v1/runs/stream", bytes.NewReader(body))
+	if err != nil {
+		return result, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-WatchAlert-Agent-Token", config.Application.Agent.InternalToken)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return result, fmt.Errorf("调用 Copilot Agent 流服务失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		content, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		return result, fmt.Errorf("Copilot Agent 流服务返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(content)))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 4096), 2<<20)
+	eventType, data := "message", ""
+	dispatch := func() error {
+		if data == "" {
+			return nil
+		}
+		var event types.AgentStreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return fmt.Errorf("解析 Copilot 流事件失败: %w", err)
+		}
+		event.Type = eventType
+		switch eventType {
+		case "delta", "status":
+			emit(event)
+		case "done":
+			result.Content, result.Evidence = event.Content, event.Evidence
+			emit(event)
+		case "error":
+			return fmt.Errorf("Copilot Agent 运行失败: %s", event.Message)
+		}
+		return nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if err := dispatch(); err != nil {
+				return result, err
+			}
+			eventType, data = "message", ""
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "data:") {
+			data += strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return result, err
+	}
+	if err := dispatch(); err != nil {
+		return result, err
+	}
+	if result.Content == "" {
+		return result, fmt.Errorf("Copilot Agent 流服务提前结束")
 	}
 	return result, nil
 }
@@ -388,6 +566,9 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if payload.Name == "" || len(payload.Labels) == 0 {
 			return nil, nil, "", fmt.Errorf("静默名称和至少一个 Label 条件不能为空")
 		}
+		if err := validateSilenceActionScope(payload.Labels, claims); err != nil {
+			return nil, nil, "", err
+		}
 		if payload.StartsAt == 0 {
 			payload.StartsAt = now
 		}
@@ -418,8 +599,14 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if payload.EndsAt == 0 {
 			payload.EndsAt = before.EndsAt
 		}
+		if len(payload.Labels) == 0 {
+			payload.Labels = before.Labels
+		}
 		if payload.EndsAt <= payload.StartsAt {
 			return nil, nil, "", fmt.Errorf("静默结束时间必须晚于开始时间")
+		}
+		if err := validateSilenceActionScope(payload.Labels, claims); err != nil {
+			return nil, nil, "", err
 		}
 		return payload, map[string]interface{}{"action": "修改静默", "before": before, "after": payload}, "medium", nil
 	case "silences.propose_delete":
@@ -429,6 +616,9 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		}
 		var before models.AlertSilences
 		if err := a.ctx.DB.DB().Where("tenant_id = ? AND id = ?", claims.TenantId, id).First(&before).Error; err != nil {
+			return nil, nil, "", err
+		}
+		if err := validateSilenceActionScope(before.Labels, claims); err != nil {
 			return nil, nil, "", err
 		}
 		return types.RequestSilenceQuery{TenantId: claims.TenantId, ID: id, FaultCenterId: before.FaultCenterId}, map[string]interface{}{"action": "删除静默", "before": before, "reversible": false}, "high", nil
@@ -443,11 +633,72 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
 			return nil, nil, "", fmt.Errorf("目标故障中心不存在或不属于当前租户")
 		}
+		if err := a.validateAlertActionScope(claims, payload.Fingerprints); err != nil {
+			return nil, nil, "", err
+		}
 		payload.TenantId, payload.Username, payload.Time = claims.TenantId, claims.UserId, now
 		return payload, map[string]interface{}{"action": "认领告警", "faultCenterId": payload.FaultCenterId, "fingerprints": payload.Fingerprints, "count": len(payload.Fingerprints)}, "medium", nil
 	default:
 		return nil, nil, "", fmt.Errorf("不支持的写操作 Tool: %s", tool)
 	}
+}
+
+func agentScopeContainsProduction(scope types.AgentScope) bool {
+	for _, environment := range scope.Environments {
+		value := strings.ToLower(strings.TrimSpace(environment))
+		if value == "production" || value == "prod" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateSilenceActionScope(labels []models.SilenceLabel, claims agenttoken.Claims) error {
+	if claims.EnvironmentLabelKey != "" && len(claims.Environments) > 0 {
+		matched := false
+		for _, label := range labels {
+			if label.Key == claims.EnvironmentLabelKey && (label.Operator == "=" || label.Operator == "==") && containsTool(claims.Environments, label.Value) {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("受限环境中的静默必须包含精确 %s Label 条件", claims.EnvironmentLabelKey)
+		}
+	}
+	if len(claims.DatasourceIds) > 0 {
+		matched := false
+		for _, label := range labels {
+			if label.Key == "datasource_id" && (label.Operator == "=" || label.Operator == "==") && containsTool(claims.DatasourceIds, label.Value) {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("受限数据源中的静默必须包含精确 datasource_id Label 条件")
+		}
+	}
+	return nil
+}
+
+func (a *agentService) validateAlertActionScope(claims agenttoken.Claims, fingerprints []string) error {
+	for _, fingerprint := range fingerprints {
+		var event models.AlertCurEvent
+		if err := a.ctx.DB.DB().Where("tenant_id = ? AND fingerprint = ?", claims.TenantId, fingerprint).First(&event).Error; err != nil {
+			return fmt.Errorf("待认领告警不存在或不属于当前租户: %s", fingerprint)
+		}
+		if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, event.DatasourceId) {
+			return fmt.Errorf("待认领告警不在允许的数据源范围内: %s", fingerprint)
+		}
+		if claims.EnvironmentLabelKey != "" && len(claims.Environments) > 0 {
+			environment := ""
+			if event.Labels != nil {
+				environment = strings.TrimSpace(fmt.Sprint(event.Labels[claims.EnvironmentLabelKey]))
+			}
+			if !containsTool(claims.Environments, environment) {
+				return fmt.Errorf("待认领告警不在允许的环境范围内: %s", fingerprint)
+			}
+		}
+	}
+	return nil
 }
 
 func (a *agentService) executeConfirmedAction(action models.AgentPendingAction, tenantId, userId string) (interface{}, error) {

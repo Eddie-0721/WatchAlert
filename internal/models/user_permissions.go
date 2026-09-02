@@ -27,6 +27,10 @@ func PermissionsInfo() map[string]UserPermissions {
 			Key: "发送 Copilot 消息",
 			API: "/api/w8t/agent/sessionMessage",
 		},
+		"agentSessionMessageStream": {
+			Key: "流式发送 Copilot 消息",
+			API: "/api/w8t/agent/sessionMessageStream",
+		},
 		"agentActionConfirm": {
 			Key: "确认 Copilot 操作",
 			API: "/api/w8t/agent/actionConfirm",

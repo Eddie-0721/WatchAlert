@@ -19,3 +19,9 @@ docker build --build-arg PIP_INDEX_URL=https://<your-pypi-mirror>/simple -t watc
 ```
 
 服务仅应暴露给 WatchAlert Go 后端所在的内部网络，不应向公网暴露 8080。
+
+`POST /v1/runs/stream` 使用 SSE 输出 `status`、`delta`、`done` 事件。浏览器仍只
+访问 Go BFF；模型密钥、Tool Gateway 令牌和 Tool 原始结果均不会下发到浏览器。
+
+Copilot 的数据源和环境范围由 WatchAlert 系统设置中的 `agentConfig.scope`
+控制，范围会签入短期运行令牌并由 Go Tool Gateway 强制校验。

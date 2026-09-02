@@ -29,6 +29,7 @@ func (agentController agentController) API(gin *gin.RouterGroup) {
 	{
 		write.POST("sessionCreate", agentController.CreateSession)
 		write.POST("sessionMessage", agentController.SendMessage)
+		write.POST("sessionMessageStream", agentController.StreamMessage)
 		write.POST("actionConfirm", agentController.ConfirmAction)
 	}
 }
@@ -99,6 +100,32 @@ func (agentController agentController) SendMessage(ctx *gin.Context) {
 		}
 		return services.AgentService.SendMessage(ctx.Request.Context(), tenantId, userId, r)
 	})
+}
+
+func (agentController agentController) StreamMessage(ctx *gin.Context) {
+	r := new(types.RequestAgentSessionMessage)
+	if err := ctx.ShouldBindJSON(r); err != nil {
+		ctx.SSEvent("error", types.AgentStreamEvent{Type: "error", Message: err.Error()})
+		return
+	}
+	tenantId, userId, err := agentRequestScope(ctx)
+	if err != nil {
+		ctx.SSEvent("error", types.AgentStreamEvent{Type: "error", Message: err.Error()})
+		return
+	}
+	ctx.Header("Content-Type", "text/event-stream")
+	ctx.Header("Cache-Control", "no-cache")
+	ctx.Header("X-Accel-Buffering", "no")
+	ctx.Status(200)
+	ctx.Writer.Flush()
+	err = services.AgentService.StreamMessage(ctx.Request.Context(), tenantId, userId, r, func(event types.AgentStreamEvent) {
+		ctx.SSEvent(event.Type, event)
+		ctx.Writer.Flush()
+	})
+	if err != nil {
+		ctx.SSEvent("error", types.AgentStreamEvent{Type: "error", Message: err.Error()})
+		ctx.Writer.Flush()
+	}
 }
 
 func agentRequestScope(ctx *gin.Context) (string, string, error) {

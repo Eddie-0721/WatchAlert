@@ -126,10 +126,20 @@ type AiConfig struct {
 // deliberately separate from AiConfig: AiConfig describes the model provider,
 // while AgentConfig describes the product-level safety boundary.
 type AgentConfig struct {
-	Enable                   *bool    `json:"enable"`
-	AllowedTools             []string `json:"allowedTools"`
-	AllowProductionWrite     *bool    `json:"allowProductionWrite"`
-	RequireWriteConfirmation *bool    `json:"requireWriteConfirmation"`
+	Enable                   *bool      `json:"enable"`
+	AllowedTools             []string   `json:"allowedTools"`
+	Scope                    AgentScope `json:"scope"`
+	AllowProductionWrite     *bool      `json:"allowProductionWrite"`
+	RequireWriteConfirmation *bool      `json:"requireWriteConfirmation"`
+}
+
+// AgentScope is an optional server-side data boundary for Copilot. When a
+// scope is configured, it is enforced by the Tool Gateway rather than trusted
+// to the model or browser.
+type AgentScope struct {
+	DatasourceIds       []string `json:"datasourceIds"`
+	EnvironmentLabelKey string   `json:"environmentLabelKey"`
+	Environments        []string `json:"environments"`
 }
 
 func (a AgentConfig) GetEnable() bool {

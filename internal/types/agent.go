@@ -28,9 +28,16 @@ type RequestAgentActionConfirm struct {
 }
 
 type AgentCapabilities struct {
-	Enabled      bool     `json:"enabled"`
-	AllowedTools []string `json:"allowedTools"`
-	CanWrite     bool     `json:"canWrite"`
+	Enabled      bool       `json:"enabled"`
+	AllowedTools []string   `json:"allowedTools"`
+	CanWrite     bool       `json:"canWrite"`
+	Scope        AgentScope `json:"scope"`
+}
+
+type AgentScope struct {
+	DatasourceIds       []string `json:"datasourceIds"`
+	EnvironmentLabelKey string   `json:"environmentLabelKey"`
+	Environments        []string `json:"environments"`
 }
 
 type ResponseAgentSessionDetail struct {
@@ -45,10 +52,21 @@ type AgentRunRequest struct {
 	Messages     []models.AgentMessage  `json:"messages"`
 	Context      map[string]interface{} `json:"context"`
 	AllowedTools []string               `json:"allowedTools"`
+	Scope        AgentScope             `json:"scope"`
 }
 
 type AgentRunResponse struct {
 	Content   string                 `json:"content"`
 	Evidence  string                 `json:"evidence"`
 	ToolCalls []models.AgentToolCall `json:"toolCalls"`
+}
+
+// AgentStreamEvent is sent as an SSE message by the browser-facing BFF.
+// Events are limited to generated text, evidence and a final persisted reply.
+type AgentStreamEvent struct {
+	Type     string `json:"type"`
+	Delta    string `json:"delta,omitempty"`
+	Content  string `json:"content,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
+	Message  string `json:"message,omitempty"`
 }

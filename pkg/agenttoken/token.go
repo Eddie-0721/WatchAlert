@@ -13,11 +13,14 @@ import (
 // Claims are intentionally limited to execution scope. They never contain a
 // JWT, a password, model credentials, or any external-system credential.
 type Claims struct {
-	SessionId string   `json:"sessionId"`
-	TenantId  string   `json:"tenantId"`
-	UserId    string   `json:"userId"`
-	Tools     []string `json:"tools"`
-	ExpiresAt int64    `json:"expiresAt"`
+	SessionId           string   `json:"sessionId"`
+	TenantId            string   `json:"tenantId"`
+	UserId              string   `json:"userId"`
+	Tools               []string `json:"tools"`
+	DatasourceIds       []string `json:"datasourceIds"`
+	EnvironmentLabelKey string   `json:"environmentLabelKey"`
+	Environments        []string `json:"environments"`
+	ExpiresAt           int64    `json:"expiresAt"`
 }
 
 func Sign(claims Claims, secret string) (string, error) {

@@ -75,11 +75,11 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 
 	switch tool {
 	case "alerts.search":
-		return a.searchAlerts(arguments, claims.TenantId)
+		return a.searchAlerts(arguments, claims)
 	case "alerts.get":
-		return a.getAlert(arguments, claims.TenantId)
+		return a.getAlert(arguments, claims)
 	case "alerts.related":
-		return a.relatedAlerts(arguments, claims.TenantId)
+		return a.relatedAlerts(arguments, claims)
 	case "incidents.get":
 		return a.getIncident(arguments, claims.TenantId)
 	case "rules.get":
@@ -87,13 +87,13 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 	case "silences.search":
 		return a.searchSilences(arguments, claims.TenantId)
 	case "prometheus.datasources":
-		return a.listPrometheusDatasources(claims.TenantId)
+		return a.listPrometheusDatasources(claims)
 	case "prometheus.rule_query":
 		return a.getRulePromQL(arguments, claims.TenantId)
 	case "prometheus.query_instant":
-		return a.queryPrometheus(requestCtx, arguments, claims.TenantId, false)
+		return a.queryPrometheus(requestCtx, arguments, claims, false)
 	case "prometheus.query_range":
-		return a.queryPrometheus(requestCtx, arguments, claims.TenantId, true)
+		return a.queryPrometheus(requestCtx, arguments, claims, true)
 	case "silences.propose_create", "silences.propose_update", "silences.propose_delete", "alerts.propose_claim":
 		return AgentService.ProposeAction(claims, tool, arguments)
 	default:
@@ -101,34 +101,38 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 	}
 }
 
-func (a *agentToolService) searchAlerts(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	var request types.RequestAlertCurEventQuery
 	if err := decodeAgentArguments(arguments, &request); err != nil {
 		return nil, err
 	}
-	request.TenantId = tenantId
+	request.TenantId = claims.TenantId
 	request.Page = safeAgentPage(request.Page)
 	data, err := EventService.ListCurrentEvent(&request)
 	if err != nil {
 		return nil, err.(error)
 	}
-	return data, nil
+	response, ok := data.(types.ResponseAlertCurEventList)
+	if !ok {
+		return nil, fmt.Errorf("当前告警服务返回了无法识别的数据")
+	}
+	return filterAgentAlertScope(response, claims), nil
 }
 
-func (a *agentToolService) getAlert(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) getAlert(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	fingerprint := stringArgument(arguments, "fingerprint")
 	if fingerprint == "" {
 		return nil, fmt.Errorf("fingerprint 不能为空")
 	}
-	return a.searchAlerts(map[string]interface{}{"fingerprint": fingerprint, "index": 1, "size": 1}, tenantId)
+	return a.searchAlerts(map[string]interface{}{"fingerprint": fingerprint, "index": 1, "size": 1}, claims)
 }
 
-func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	fingerprint := stringArgument(arguments, "fingerprint")
 	if fingerprint == "" {
 		return nil, fmt.Errorf("fingerprint 不能为空")
 	}
-	baseData, err := a.getAlert(arguments, tenantId)
+	baseData, err := a.getAlert(arguments, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +141,7 @@ func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, tenan
 		return base, nil
 	}
 	event := base.List[0]
-	allData, err := a.searchAlerts(map[string]interface{}{"faultCenterId": event.FaultCenterId, "index": 1, "size": 50}, tenantId)
+	allData, err := a.searchAlerts(map[string]interface{}{"faultCenterId": event.FaultCenterId, "index": 1, "size": 50}, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -192,13 +196,16 @@ func (a *agentToolService) searchSilences(arguments map[string]interface{}, tena
 	return data, nil
 }
 
-func (a *agentToolService) listPrometheusDatasources(tenantId string) (interface{}, error) {
-	sources, err := a.ctx.DB.Datasource().List(tenantId, "", provider.PrometheusDsProvider, "")
+func (a *agentToolService) listPrometheusDatasources(claims agenttoken.Claims) (interface{}, error) {
+	sources, err := a.ctx.DB.Datasource().List(claims.TenantId, "", provider.PrometheusDsProvider, "")
 	if err != nil {
 		return nil, err
 	}
 	result := make([]map[string]interface{}, 0, len(sources))
 	for _, source := range sources {
+		if !agentDatasourceAllowed(source, claims) {
+			continue
+		}
 		result = append(result, map[string]interface{}{
 			"id": source.ID, "name": source.Name, "type": source.Type, "labels": source.Labels,
 			"description": source.Description, "enabled": source.GetEnabled(),
@@ -227,7 +234,7 @@ type agentPrometheusQuery struct {
 	Step         int64  `json:"step"`
 }
 
-func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[string]interface{}, tenantId string, isRange bool) (interface{}, error) {
+func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[string]interface{}, claims agenttoken.Claims, isRange bool) (interface{}, error) {
 	var request agentPrometheusQuery
 	if err := decodeAgentArguments(arguments, &request); err != nil {
 		return nil, err
@@ -241,12 +248,15 @@ func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[stri
 	if _, err := parser.ParseExpr(request.PromQL); err != nil {
 		return nil, fmt.Errorf("PromQL 校验失败: %w", err)
 	}
-	source, err := a.ctx.DB.Datasource().GetForTenant(tenantId, request.DatasourceId)
+	source, err := a.ctx.DB.Datasource().GetForTenant(claims.TenantId, request.DatasourceId)
 	if err != nil {
 		return nil, err
 	}
 	if source.Type != provider.PrometheusDsProvider || !source.GetEnabled() {
 		return nil, fmt.Errorf("Prometheus 数据源不可用")
+	}
+	if !agentDatasourceAllowed(source, claims) {
+		return nil, fmt.Errorf("当前 Copilot 环境范围不允许访问该数据源")
 	}
 	client, err := provider.NewPrometheusClient(source)
 	if err != nil {
@@ -324,6 +334,51 @@ func safeAgentPage(page models.Page) models.Page {
 		page.Size = 50
 	}
 	return page
+}
+
+// filterAgentAlertScope is deliberately applied after the regular service
+// query as a second safety boundary. A browser, model or future connector
+// cannot widen the range simply by omitting an environment filter.
+func filterAgentAlertScope(data types.ResponseAlertCurEventList, claims agenttoken.Claims) types.ResponseAlertCurEventList {
+	if len(claims.DatasourceIds) == 0 && (claims.EnvironmentLabelKey == "" || len(claims.Environments) == 0) {
+		return data
+	}
+	filtered := make([]types.ResponseAlertCurEvent, 0, len(data.List))
+	for _, item := range data.List {
+		if containsTool(claims.DatasourceIds, item.DatasourceId) || len(claims.DatasourceIds) == 0 {
+			if agentEnvironmentAllowed(item, claims) {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+	data.List = filtered
+	data.Total = int64(len(filtered))
+	return data
+}
+
+func agentEnvironmentAllowed(item types.ResponseAlertCurEvent, claims agenttoken.Claims) bool {
+	if claims.EnvironmentLabelKey == "" || len(claims.Environments) == 0 {
+		return true
+	}
+	value := item.Scope.Environment
+	if value == "" && item.Labels != nil {
+		value = strings.TrimSpace(fmt.Sprint(item.Labels[claims.EnvironmentLabelKey]))
+	}
+	return containsTool(claims.Environments, value)
+}
+
+func agentDatasourceAllowed(source models.AlertDataSource, claims agenttoken.Claims) bool {
+	if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, source.ID) {
+		return false
+	}
+	if claims.EnvironmentLabelKey == "" || len(claims.Environments) == 0 {
+		return true
+	}
+	if source.Labels == nil {
+		return false
+	}
+	value, exists := source.Labels[claims.EnvironmentLabelKey]
+	return exists && containsTool(claims.Environments, strings.TrimSpace(fmt.Sprint(value)))
 }
 
 func containsTool(tools []string, candidate string) bool {

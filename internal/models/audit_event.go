@@ -4,6 +4,7 @@ package models
 var AuditEventMap = map[string]string{
 	"/api/w8t/agent/sessionCreate":  "创建 Copilot 会话",
 	"/api/w8t/agent/sessionMessage": "发送 Copilot 消息",
+	"/api/w8t/agent/sessionMessageStream": "流式发送 Copilot 消息",
 	"/api/w8t/agent/actionConfirm":  "确认 Copilot 操作",
 	// ========== 用户相关 ==========
 	"/api/w8t/user/userUpdate":     "更新用户",

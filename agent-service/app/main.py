@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 try:
@@ -223,6 +224,22 @@ def conversation_input(request: RunRequest) -> str:
     return "\n\n".join(lines)
 
 
+def build_agent(context: RunContext) -> Agent:
+    registered_tools = [watchalert_query]
+    if any(".propose_" in item for item in context.allowed_tools) and watchalert_propose_action is not None:
+        registered_tools.append(watchalert_propose_action)
+    return Agent(
+        name="WatchAlert Copilot",
+        instructions=build_instructions(context.allowed_tools),
+        model=setting("AGENT_MODEL"),
+        tools=registered_tools,
+    )
+
+
+def sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {
@@ -243,16 +260,7 @@ async def run_agent(request: RunRequest, x_watchalert_agent_token: str | None = 
     context = RunContext(token=request.runToken, allowed_tools=set(request.allowedTools))
     context_token = run_context.set(context)
     try:
-        registered_tools = [watchalert_query]
-        if any(".propose_" in item for item in context.allowed_tools) and watchalert_propose_action is not None:
-            registered_tools.append(watchalert_propose_action)
-        agent = Agent(
-            name="WatchAlert Copilot",
-            instructions=build_instructions(context.allowed_tools),
-            model=setting("AGENT_MODEL"),
-            tools=registered_tools,
-        )
-        result = await Runner.run(agent, conversation_input(request))
+        result = await Runner.run(build_agent(context), conversation_input(request))
         content = str(result.final_output or "未得到可用分析结果。")
     except Exception as error:  # Model/provider errors are not leaked with secrets.
         raise HTTPException(status_code=502, detail=f"Agent run failed: {str(error)[:300]}") from error
@@ -261,6 +269,42 @@ async def run_agent(request: RunRequest, x_watchalert_agent_token: str | None = 
 
     evidence = json.dumps([item.model_dump() for item in context.evidence], ensure_ascii=False)
     return RunResponse(content=content, evidence=evidence)
+
+
+@app.post("/v1/runs/stream")
+async def stream_agent(request: RunRequest, x_watchalert_agent_token: str | None = Header(default=None)) -> StreamingResponse:
+    """Stream model text while preserving the same Tool and token boundary.
+
+    Only the final `done` event contains the persisted response payload. Tool
+    data stays behind the Go gateway; the browser sees compact evidence only.
+    """
+    require_internal_token(x_watchalert_agent_token)
+    if Agent is None or Runner is None or watchalert_query is None:
+        raise HTTPException(status_code=503, detail="openai-agents runtime is unavailable")
+    if not setting("OPENAI_API_KEY") or not setting("AGENT_MODEL"):
+        raise HTTPException(status_code=503, detail="model provider is not configured")
+
+    async def generate():
+        context = RunContext(token=request.runToken, allowed_tools=set(request.allowedTools))
+        context_token = run_context.set(context)
+        try:
+            yield sse("status", {"message": "正在分析受控数据…"})
+            result = Runner.run_streamed(build_agent(context), conversation_input(request))
+            async for event in result.stream_events():
+                if getattr(event, "type", "") != "raw_response_event":
+                    continue
+                delta = getattr(getattr(event, "data", None), "delta", None)
+                if isinstance(delta, str) and delta:
+                    yield sse("delta", {"delta": delta})
+            content = str(result.final_output or "未得到可用分析结果。")
+            evidence = json.dumps([item.model_dump() for item in context.evidence], ensure_ascii=False)
+            yield sse("done", {"content": content, "evidence": evidence})
+        except Exception as error:
+            yield sse("error", {"message": f"Agent run failed: {str(error)[:300]}"})
+        finally:
+            run_context.reset(context_token)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def tool_summary(data: Any) -> str:
