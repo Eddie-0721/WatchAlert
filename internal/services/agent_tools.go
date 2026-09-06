@@ -12,8 +12,6 @@ import (
 	"watchAlert/pkg/agenttoken"
 	"watchAlert/pkg/provider"
 	"watchAlert/pkg/tools"
-
-	"github.com/prometheus/prometheus/promql/parser"
 )
 
 const (
@@ -72,6 +70,10 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 	if !capabilities.Enabled || !agenttoken.Allows(claims, tool) || !containsTool(capabilities.AllowedTools, tool) {
 		return nil, fmt.Errorf("当前用户无权使用 Tool %s", tool)
 	}
+	claims, err = restrictAgentClaims(claims, capabilities.Scope)
+	if err != nil {
+		return nil, err
+	}
 
 	switch tool {
 	case "alerts.search":
@@ -107,6 +109,11 @@ func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims
 		return nil, err
 	}
 	request.TenantId = claims.TenantId
+	// Scope filtering is applied below; never expose an unscoped aggregate.
+	request.IncludeSummary = false
+	request.AgentDatasourceIds = claims.DatasourceIds
+	request.AgentEnvironmentLabelKey = claims.EnvironmentLabelKey
+	request.AgentEnvironments = claims.Environments
 	request.Page = safeAgentPage(request.Page)
 	data, err := EventService.ListCurrentEvent(&request)
 	if err != nil {
@@ -116,7 +123,7 @@ func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims
 	if !ok {
 		return nil, fmt.Errorf("当前告警服务返回了无法识别的数据")
 	}
-	return filterAgentAlertScope(response, claims), nil
+	return response, nil
 }
 
 func (a *agentToolService) getAlert(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
@@ -245,8 +252,8 @@ func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[stri
 	if len(request.PromQL) > 4096 {
 		return nil, fmt.Errorf("PromQL 超过最大长度")
 	}
-	if _, err := parser.ParseExpr(request.PromQL); err != nil {
-		return nil, fmt.Errorf("PromQL 校验失败: %w", err)
+	if err := validateAgentPromQL(request.PromQL, claims); err != nil {
+		return nil, err
 	}
 	source, err := a.ctx.DB.Datasource().GetForTenant(claims.TenantId, request.DatasourceId)
 	if err != nil {
@@ -255,7 +262,7 @@ func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[stri
 	if source.Type != provider.PrometheusDsProvider || !source.GetEnabled() {
 		return nil, fmt.Errorf("Prometheus 数据源不可用")
 	}
-	if !agentDatasourceAllowed(source, claims) {
+	if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, source.ID) {
 		return nil, fmt.Errorf("当前 Copilot 环境范围不允许访问该数据源")
 	}
 	client, err := provider.NewPrometheusClient(source)
@@ -360,25 +367,14 @@ func agentEnvironmentAllowed(item types.ResponseAlertCurEvent, claims agenttoken
 	if claims.EnvironmentLabelKey == "" || len(claims.Environments) == 0 {
 		return true
 	}
-	value := item.Scope.Environment
-	if value == "" && item.Labels != nil {
-		value = strings.TrimSpace(fmt.Sprint(item.Labels[claims.EnvironmentLabelKey]))
-	}
-	return containsTool(claims.Environments, value)
+	value, ok := item.Labels[claims.EnvironmentLabelKey].(string)
+	return ok && containsTool(claims.Environments, value)
 }
 
 func agentDatasourceAllowed(source models.AlertDataSource, claims agenttoken.Claims) bool {
-	if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, source.ID) {
-		return false
-	}
-	if claims.EnvironmentLabelKey == "" || len(claims.Environments) == 0 {
-		return true
-	}
-	if source.Labels == nil {
-		return false
-	}
-	value, exists := source.Labels[claims.EnvironmentLabelKey]
-	return exists && containsTool(claims.Environments, strings.TrimSpace(fmt.Sprint(value)))
+	// The connection may serve several environments. Metric isolation is enforced
+	// by validateAgentPromQL, not by descriptive labels on the connection.
+	return len(claims.DatasourceIds) == 0 || containsTool(claims.DatasourceIds, source.ID)
 }
 
 func containsTool(tools []string, candidate string) bool {

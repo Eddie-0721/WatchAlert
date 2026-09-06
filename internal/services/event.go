@@ -118,6 +118,9 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	}
 
 	for _, event := range allEvents {
+		if !eventWithinAgentScope(event, r) {
+			continue
+		}
 		if r.DatasourceType != "" && event.DatasourceType != r.DatasourceType {
 			continue
 		}
@@ -174,9 +177,23 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 		return a.Fingerprint < b.Fingerprint
 	})
 
+	var summary *types.AlertEventSummary
+	if r.IncludeSummary {
+		summary = summarizeAlertEvents(filteredEvents)
+	}
+	if r.Queue != "" {
+		queued := make([]types.ResponseAlertCurEvent, 0)
+		for _, event := range filteredEvents {
+			if alertInQueue(event, r.Queue) {
+				queued = append(queued, event)
+			}
+		}
+		filteredEvents = queued
+	}
 	paginatedList := pageSlice(filteredEvents, int(r.Page.Index), int(r.Page.Size))
 	return types.ResponseAlertCurEventList{
-		List: paginatedList,
+		List:    paginatedList,
+		Summary: summary,
 		Page: models.Page{
 			Total: int64(len(filteredEvents)),
 			Index: r.Page.Index,

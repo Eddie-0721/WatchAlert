@@ -25,4 +25,6 @@ dist-ssr
 *.sw?
 deploy/docker-compose/mysql
 deploy/docker-compose/redis
+__pycache__/
+*.pyc
 

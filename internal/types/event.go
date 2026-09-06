@@ -13,27 +13,33 @@ type RequestProcessAlertEvent struct {
 
 // RequestAlertCurEventQuery 请求活跃告警事件
 type RequestAlertCurEventQuery struct {
-	TenantId        string `json:"tenantId" form:"tenantId"`
-	RuleId          string `json:"ruleId" form:"ruleId"`
-	RuleName        string `json:"ruleName" form:"ruleName"`
-	DatasourceType  string `json:"datasourceType" form:"datasourceType"`
-	DatasourceId    string `json:"datasourceId" form:"datasourceId"`
-	Fingerprint     string `json:"fingerprint" form:"fingerprint"`
-	Query           string `json:"query" form:"query"`
-	Scope           int64  `json:"scope" form:"scope"`
-	Severity        string `json:"severity" form:"severity"`
-	FaultCenterId   string `json:"faultCenterId" form:"faultCenterId"`
-	Environment     string `json:"environment" form:"environment"`
-	Service         string `json:"service" form:"service"`
-	Cluster         string `json:"cluster" form:"cluster"`
-	Namespace       string `json:"namespace" form:"namespace"`
-	Instance        string `json:"instance" form:"instance"`
-	Status          string `json:"status" form:"status"`
-	LifecycleStatus string `json:"lifecycleStatus" form:"lifecycleStatus"`
-	Acknowledged    *bool  `json:"acknowledged" form:"acknowledged"`
-	Silenced        *bool  `json:"silenced" form:"silenced"`
-	IncludeRecovered bool  `json:"includeRecovered" form:"includeRecovered"`
-	SortOrder       string `json:"sortOrder" form:"sortOrder"`
+	TenantId         string `json:"tenantId" form:"tenantId"`
+	RuleId           string `json:"ruleId" form:"ruleId"`
+	RuleName         string `json:"ruleName" form:"ruleName"`
+	DatasourceType   string `json:"datasourceType" form:"datasourceType"`
+	DatasourceId     string `json:"datasourceId" form:"datasourceId"`
+	Fingerprint      string `json:"fingerprint" form:"fingerprint"`
+	Query            string `json:"query" form:"query"`
+	Scope            int64  `json:"scope" form:"scope"`
+	Severity         string `json:"severity" form:"severity"`
+	FaultCenterId    string `json:"faultCenterId" form:"faultCenterId"`
+	Environment      string `json:"environment" form:"environment"`
+	Service          string `json:"service" form:"service"`
+	Cluster          string `json:"cluster" form:"cluster"`
+	Namespace        string `json:"namespace" form:"namespace"`
+	Instance         string `json:"instance" form:"instance"`
+	Status           string `json:"status" form:"status"`
+	LifecycleStatus  string `json:"lifecycleStatus" form:"lifecycleStatus"`
+	Acknowledged     *bool  `json:"acknowledged" form:"acknowledged"`
+	Silenced         *bool  `json:"silenced" form:"silenced"`
+	IncludeRecovered bool   `json:"includeRecovered" form:"includeRecovered"`
+	Queue            string `json:"queue" form:"queue"`
+	IncludeSummary   bool   `json:"includeSummary" form:"includeSummary"`
+	// Trusted gateway constraints; never bind these from an HTTP request.
+	AgentDatasourceIds       []string `json:"-" form:"-"`
+	AgentEnvironmentLabelKey string   `json:"-" form:"-"`
+	AgentEnvironments        []string `json:"-" form:"-"`
+	SortOrder                string   `json:"sortOrder" form:"sortOrder"`
 	models.Page
 }
 
@@ -63,8 +69,15 @@ type ResponseAlertCurEvent struct {
 
 // ResponseAlertCurEventList 返回活跃告警列表
 type ResponseAlertCurEventList struct {
-	List []ResponseAlertCurEvent `json:"list"`
+	List    []ResponseAlertCurEvent `json:"list"`
+	Summary *AlertEventSummary      `json:"summary,omitempty"`
 	models.Page
+}
+
+type AlertEventSummary struct {
+	Queues       map[string]int `json:"queues"`
+	Environments []string       `json:"environments"`
+	Services     []string       `json:"services"`
 }
 
 // RequestAlertHisEventQuery 请求查询历史事件

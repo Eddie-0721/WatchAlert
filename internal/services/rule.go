@@ -394,7 +394,7 @@ func (rs ruleService) Import(req interface{}) (interface{}, interface{}) {
 			Enabled:              &disable,
 		})
 		if err != nil {
-			logc.Errorf(rs.ctx.Ctx, err.Error())
+			logc.Errorf(rs.ctx.Ctx, "%s", err.Error())
 			continue
 		}
 	}

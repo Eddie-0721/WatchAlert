@@ -34,13 +34,13 @@ func newInterLdapService(ctx *ctx.Context) InterLdapService {
 func (l ldapService) getAdminAuth(ldapConfig models.LdapConfig) (*ldap.Conn, error) {
 	ls, err := ldap.Dial("tcp", ldapConfig.Address)
 	if err != nil {
-		logc.Errorf(l.ctx.Ctx, fmt.Sprintf("无法连接 LDAP 服务器, Address: %s, err: %s", ldapConfig.Address, err.Error()))
+		logc.Errorf(l.ctx.Ctx, "无法连接 LDAP 服务器, Address: %s, err: %s", ldapConfig.Address, err.Error())
 		return nil, err
 	}
 
 	err = ls.Bind(ldapConfig.AdminUser, ldapConfig.AdminPass)
 	if err != nil {
-		logc.Errorf(l.ctx.Ctx, fmt.Sprintf("LDAP 管理员绑定失败 err: %s", err.Error()))
+		logc.Errorf(l.ctx.Ctx, "LDAP 管理员绑定失败 err: %s", err.Error())
 		return nil, err
 	}
 

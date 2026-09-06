@@ -11,6 +11,7 @@ import contextvars
 import hmac
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,7 @@ class RunRequest(BaseModel):
     messages: list[AgentMessage] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     allowedTools: list[str] = Field(default_factory=list)
+    scope: dict[str, Any] = Field(default_factory=dict)
     modelConfig: ModelConfig = Field(default_factory=ModelConfig)
 
 
@@ -63,6 +65,10 @@ class ToolEvidence(BaseModel):
     payloadHash: str | None = None
     preview: Any | None = None
     riskLevel: str | None = None
+    queriedAt: int = Field(default_factory=lambda: int(time.time()))
+    source: dict[str, Any] | None = None
+    query: dict[str, Any] | None = None
+    truncated: bool = False
 
 
 class RunResponse(BaseModel):
@@ -142,7 +148,7 @@ async def execute_watchalert_tool(tool_name: str, arguments_json: str = "{}") ->
             context.evidence.append(ToolEvidence(toolName=tool_name, status="failed", summary=str(response_data.get("data", "tool failed"))[:240]))
             return json.dumps({"ok": False, "error": response_data.get("data", "tool failed")}, ensure_ascii=False)
         result = response_data.get("data")
-        context.evidence.append(ToolEvidence(toolName=tool_name, status="completed", summary=tool_summary(result)))
+        context.evidence.append(query_evidence(tool_name, arguments, result))
         return json.dumps({"ok": True, "data": result}, ensure_ascii=False, default=str)
     except (httpx.HTTPError, ValueError) as error:
         context.evidence.append(ToolEvidence(toolName=tool_name, status="failed", summary=str(error)[:240]))
@@ -261,7 +267,7 @@ def build_agent(context: RunContext, request: RunRequest) -> Agent:
         registered_tools.append(watchalert_propose_action)
     return Agent(
         name="WatchAlert Copilot",
-        instructions=build_instructions(context.allowed_tools),
+        instructions=build_instructions(context.allowed_tools) + "\n授权范围（不可扩大）：" + json.dumps(request.scope, ensure_ascii=False) + "\n" + TOOL_ARGUMENTS,
         model=configured_model(request),
         tools=registered_tools,
     )
@@ -339,8 +345,47 @@ def tool_summary(data: Any) -> str:
         return f"返回 {len(data)} 条记录"
     if isinstance(data, dict):
         if "list" in data and isinstance(data["list"], list):
-            return f"返回 {len(data['list'])} 条记录"
+            return f"本页返回 {len(data['list'])} 条记录；总数 {data.get('total', '未知')}，不代表全部数据已读取"
         if "resultCount" in data:
             return f"Prometheus 返回 {data['resultCount']} 个样本"
         return "已获得结构化结果"
     return str(data)[:240]
+
+
+def query_evidence(tool: str, arguments: dict[str, Any], result: Any) -> ToolEvidence:
+    allowed_keys = {"fingerprint", "ruleId", "id", "datasourceId", "faultCenterId", "environment", "service", "index", "size", "promql", "start", "end", "step", "queue"}
+    query = {key: value for key, value in arguments.items() if key in allowed_keys}
+    source: dict[str, Any] = {}
+    truncated = False
+    if isinstance(result, dict):
+        datasource = result.get("datasource")
+        if isinstance(datasource, dict):
+            source["datasource"] = {key: datasource[key] for key in ("id", "name") if key in datasource}
+        for key in ("promql", "start", "end", "step"):
+            if key in result:
+                query[key] = result[key]
+        rows = result.get("list")
+        if isinstance(rows, list):
+            source["records"] = [{key: row[key] for key in ("fingerprint", "eventId", "rule_id", "id") if key in row} for row in rows[:10] if isinstance(row, dict)]
+            source["returnedCount"] = len(rows)
+            source["total"] = result.get("total")
+        truncated = bool(result.get("truncated"))
+    return ToolEvidence(toolName=tool, status="completed", summary=tool_summary(result), source=source, query=query, truncated=truncated)
+
+
+TOOL_ARGUMENTS = """
+工具参数约定（arguments_json 为 JSON 对象；未知 ID 先查询，不能猜测）：
+alerts.search: {query?, environment?, service?, faultCenterId?, severity?, index?:1, size?:20, queue?:\"all\"}，仅当前事件，最多50条/页，总数大于本页时需翻页。
+alerts.get / alerts.related: {fingerprint: string}；related 仅同规则候选，不代表相同根因。
+incidents.get: {id: string}，返回故障中心通知配置，不是单次故障记录。
+rules.get / prometheus.rule_query: {ruleId: string}。
+silences.search: {query?, id?, faultCenterId?, status?:\"all\", index?:1, size?:20}。
+prometheus.datasources: {}。
+prometheus.query_instant: {datasourceId: string, promql: string}。
+prometheus.query_range: {datasourceId: string, promql: string, start?:Unix秒, end?:Unix秒, step?:30}，范围最长6小时。
+配置了环境范围时，PromQL 的每个向量选择器必须含精确的授权环境条件，不能使用正则或负向条件替代。
+silences.propose_create: {name, labels:[{key,operator:\"==\",value}], startsAt?:Unix秒, endsAt:Unix秒, faultCenterId?, comment?}。
+silences.propose_update: {id, name, labels, startsAt, endsAt, faultCenterId, comment}，先查询原配置并保留不修改字段。
+silences.propose_delete: {id}。alerts.propose_claim: {faultCenterId, fingerprints:[string]}。
+工具失败不是无告警；返回列表不是完整总量；不得声称历史查询已完成（目前无历史查询工具）。
+""".strip()

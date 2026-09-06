@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"watchAlert/config"
@@ -139,6 +140,31 @@ func (a *agentService) GetSession(tenantId, userId, sessionId string) (types.Res
 	if err := a.ctx.DB.DB().Where("session_id = ? AND tenant_id = ?", sessionId, tenantId).Order("created_at asc").Find(&messages).Error; err != nil {
 		return types.ResponseAgentSessionDetail{}, err
 	}
+	var actions []models.AgentPendingAction
+	if err := a.ctx.DB.DB().Where("session_id = ? AND tenant_id = ?", sessionId, tenantId).Find(&actions).Error; err != nil {
+		return types.ResponseAgentSessionDetail{}, err
+	}
+	statuses := make(map[string]string, len(actions))
+	for _, action := range actions {
+		status := action.Status
+		if status == "pending_confirmation" && action.ExpiresAt <= time.Now().Unix() {
+			status = "expired"
+		}
+		statuses[action.ID] = status
+	}
+	for i := range messages {
+		var evidence []map[string]interface{}
+		if json.Unmarshal([]byte(messages[i].Evidence), &evidence) != nil {
+			continue
+		}
+		for _, item := range evidence {
+			if id, ok := item["actionId"].(string); ok && statuses[id] != "" {
+				item["status"] = statuses[id]
+			}
+		}
+		encoded, _ := json.Marshal(evidence)
+		messages[i].Evidence = string(encoded)
+	}
 	return types.ResponseAgentSessionDetail{Session: session, Messages: messages}, nil
 }
 
@@ -181,8 +207,12 @@ func (a *agentService) ProposeAction(claims agenttoken.Claims, tool string, argu
 	if err != nil {
 		return models.AgentPendingAction{}, err
 	}
-	if agentScopeContainsProduction(capabilities.Scope) && (settings.AgentConfig.AllowProductionWrite == nil || !*settings.AgentConfig.AllowProductionWrite) {
-		return models.AgentPendingAction{}, fmt.Errorf("当前 Copilot 范围包含生产环境，但未允许生产环境写操作")
+	if err := validateAgentWritePolicy(settings.AgentConfig, capabilities, tool); err != nil {
+		return models.AgentPendingAction{}, err
+	}
+	claims, err = restrictAgentClaims(claims, capabilities.Scope)
+	if err != nil {
+		return models.AgentPendingAction{}, err
 	}
 
 	payload, preview, risk, err := a.buildActionPreview(claims, tool, arguments)
@@ -232,8 +262,34 @@ func (a *agentService) ConfirmAction(tenantId, userId string, req *types.Request
 		return action, fmt.Errorf("操作内容已变化，请重新确认")
 	}
 	capabilities, err := a.Capabilities(tenantId, userId)
-	if err != nil || !containsTool(capabilities.AllowedTools, action.ActionType) {
+	if err != nil {
 		return action, fmt.Errorf("当前用户已不具备该操作权限")
+	}
+	settings, err := a.ctx.DB.Setting().Get()
+	if err != nil {
+		return action, err
+	}
+	if err := validateAgentWritePolicy(settings.AgentConfig, capabilities, action.ActionType); err != nil {
+		return action, err
+	}
+	claims := agenttoken.Claims{TenantId: tenantId, UserId: userId, SessionId: action.SessionId,
+		DatasourceIds: capabilities.Scope.DatasourceIds, EnvironmentLabelKey: capabilities.Scope.EnvironmentLabelKey, Environments: capabilities.Scope.Environments}
+	var arguments map[string]interface{}
+	if err := json.Unmarshal([]byte(action.Payload), &arguments); err != nil {
+		return action, err
+	}
+	_, freshPreview, _, err := a.buildActionPreview(claims, action.ActionType, arguments)
+	if err != nil {
+		return action, err
+	}
+	// Updates/deletes must not silently apply to an object changed since preview.
+	if action.ActionType == "silences.propose_update" || action.ActionType == "silences.propose_delete" {
+		var previous map[string]json.RawMessage
+		var current map[string]json.RawMessage
+		freshBytes, _ := json.Marshal(freshPreview)
+		if json.Unmarshal([]byte(action.Preview), &previous) != nil || json.Unmarshal(freshBytes, &current) != nil || string(previous["before"]) != string(current["before"]) {
+			return action, fmt.Errorf("静默配置已变化，请重新生成操作预览")
+		}
 	}
 	claimed := a.ctx.DB.DB().Model(&models.AgentPendingAction{}).
 		Where("id = ? AND status = ?", action.ID, "pending_confirmation").
@@ -603,7 +659,7 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if payload.StartsAt == 0 {
 			payload.StartsAt = now
 		}
-		if payload.EndsAt <= payload.StartsAt || payload.EndsAt-payload.StartsAt > int64((30*24*time.Hour).Seconds()) {
+		if payload.EndsAt <= payload.StartsAt || payload.EndsAt <= now || payload.EndsAt-payload.StartsAt > int64((30*24*time.Hour).Seconds()) {
 			return nil, nil, "", fmt.Errorf("静默结束时间必须晚于开始时间且最长不超过 30 天")
 		}
 		if payload.FaultCenterId != "" && !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
@@ -624,6 +680,9 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		}
 		payload.TenantId = claims.TenantId
 		payload.UpdateBy = claims.UserId
+		if err := validateSilenceActionScope(before.Labels, claims); err != nil {
+			return nil, nil, "", err
+		}
 		if payload.StartsAt == 0 {
 			payload.StartsAt = before.StartsAt
 		}
@@ -633,11 +692,14 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if len(payload.Labels) == 0 {
 			payload.Labels = before.Labels
 		}
-		if payload.EndsAt <= payload.StartsAt {
+		if payload.EndsAt <= payload.StartsAt || payload.EndsAt <= now || payload.EndsAt-payload.StartsAt > int64((30*24*time.Hour).Seconds()) {
 			return nil, nil, "", fmt.Errorf("静默结束时间必须晚于开始时间")
 		}
 		if err := validateSilenceActionScope(payload.Labels, claims); err != nil {
 			return nil, nil, "", err
+		}
+		if payload.FaultCenterId != "" && !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
+			return nil, nil, "", fmt.Errorf("目标故障中心不存在或不属于当前租户")
 		}
 		return payload, map[string]interface{}{"action": "修改静默", "before": before, "after": payload}, "medium", nil
 	case "silences.propose_delete":
@@ -664,7 +726,7 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
 			return nil, nil, "", fmt.Errorf("目标故障中心不存在或不属于当前租户")
 		}
-		if err := a.validateAlertActionScope(claims, payload.Fingerprints); err != nil {
+		if err := a.validateAlertActionScope(claims, payload.FaultCenterId, payload.Fingerprints); err != nil {
 			return nil, nil, "", err
 		}
 		payload.TenantId, payload.Username, payload.Time = claims.TenantId, claims.UserId, now
@@ -675,9 +737,11 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 }
 
 func agentScopeContainsProduction(scope types.AgentScope) bool {
+	if scope.EnvironmentLabelKey == "" || len(scope.Environments) == 0 {
+		return true
+	}
 	for _, environment := range scope.Environments {
-		value := strings.ToLower(strings.TrimSpace(environment))
-		if value == "production" || value == "prod" {
+		if !isExplicitNonProduction(environment) {
 			return true
 		}
 	}
@@ -685,6 +749,23 @@ func agentScopeContainsProduction(scope types.AgentScope) bool {
 }
 
 func validateSilenceActionScope(labels []models.SilenceLabel, claims agenttoken.Claims) error {
+	if len(labels) == 0 {
+		return fmt.Errorf("静默必须包含匹配条件")
+	}
+	for _, label := range labels {
+		if strings.TrimSpace(label.Key) == "" || label.Value == "" {
+			return fmt.Errorf("静默匹配条件不能为空")
+		}
+		switch label.Operator {
+		case "=", "==", "!=":
+		case "=~", "!~":
+			if _, err := regexp.Compile(label.Value); err != nil {
+				return fmt.Errorf("静默正则表达式无效")
+			}
+		default:
+			return fmt.Errorf("不支持的静默匹配操作符")
+		}
+	}
 	if claims.EnvironmentLabelKey != "" && len(claims.Environments) > 0 {
 		matched := false
 		for _, label := range labels {
@@ -710,10 +791,10 @@ func validateSilenceActionScope(labels []models.SilenceLabel, claims agenttoken.
 	return nil
 }
 
-func (a *agentService) validateAlertActionScope(claims agenttoken.Claims, fingerprints []string) error {
+func (a *agentService) validateAlertActionScope(claims agenttoken.Claims, centerId string, fingerprints []string) error {
 	for _, fingerprint := range fingerprints {
-		var event models.AlertCurEvent
-		if err := a.ctx.DB.DB().Where("tenant_id = ? AND fingerprint = ?", claims.TenantId, fingerprint).First(&event).Error; err != nil {
+		event, err := a.ctx.Redis.Alert().GetEventFromCache(claims.TenantId, centerId, fingerprint)
+		if err != nil || event.Fingerprint != fingerprint || event.TenantId != claims.TenantId {
 			return fmt.Errorf("待认领告警不存在或不属于当前租户: %s", fingerprint)
 		}
 		if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, event.DatasourceId) {
