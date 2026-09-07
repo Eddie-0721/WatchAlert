@@ -13,6 +13,9 @@ jobs:
           go-version-file: go.mod
       - run: go build -o /tmp/watchalert ./cmd/main.go
       - run: go test ./internal/services ./internal/models ./pkg/agenttoken ./pkg/secretbox
+      # Existing unrelated repo files have vet findings; keep the regression
+      # isolated without suppressing vet for the main suites.
+      - run: go test -vet=off ./internal/repo -run '^TestSilenceUpdatePersistsFutureStatusAndLabels$'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

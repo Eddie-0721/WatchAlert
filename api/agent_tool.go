@@ -20,10 +20,11 @@ type agentToolController struct{}
 
 var AgentToolController = new(agentToolController)
 
-func (agentToolController agentToolController) API(gin *gin.RouterGroup) {
-	internal := gin.Group("internal/agent")
+func (agentToolController agentToolController) API(router *gin.RouterGroup) {
+	internal := router.Group("internal/agent")
 	internal.Use(requireAgentServiceToken())
 	{
+		internal.GET("health", func(ctx *gin.Context) { response.Success(ctx, gin.H{"status": "ok"}, "success") })
 		internal.POST("tools/execute", agentToolController.Execute)
 	}
 }

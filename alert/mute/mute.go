@@ -1,7 +1,7 @@
 package mute
 
 import (
-	"regexp"
+	"time"
 	"watchAlert/internal/ctx"
 	models "watchAlert/internal/models"
 
@@ -39,7 +39,7 @@ func IsSilence(mute MuteParams) bool {
 	// 获取静默列表中所有的id
 	ids, err := silenceCtx.GetAlertMutes(mute.TenantId, mute.FaultCenterId)
 	if err != nil {
-		logc.Errorf(ctx.Ctx, err.Error())
+		logc.Errorf(ctx.Ctx, "%s", err.Error())
 		return false
 	}
 
@@ -47,11 +47,11 @@ func IsSilence(mute MuteParams) bool {
 	for _, id := range ids {
 		muteRule, err := silenceCtx.WithIdGetMuteFromCache(mute.TenantId, mute.FaultCenterId, id)
 		if err != nil {
-			logc.Errorf(ctx.Ctx, err.Error())
+			logc.Errorf(ctx.Ctx, "%s", err.Error())
 			return false
 		}
 
-		if muteRule.Status != 1 {
+		if muteRule == nil || muteRule.Status != 1 || time.Now().Unix() < muteRule.StartsAt || time.Now().Unix() >= muteRule.EndsAt {
 			continue
 		}
 
@@ -64,35 +64,6 @@ func IsSilence(mute MuteParams) bool {
 }
 
 func evalCondition(metrics map[string]interface{}, muteLabels []models.SilenceLabel) bool {
-	for _, muteLabel := range muteLabels {
-		value, exists := metrics[muteLabel.Key]
-		if !exists {
-			return false
-		}
-
-		val, ok := value.(string)
-		if !ok {
-			continue
-		}
-
-		var matched bool
-		switch muteLabel.Operator {
-		case "==", "=":
-			matched = (val == muteLabel.Value)
-		case "!=":
-			matched = (val != muteLabel.Value)
-		case "=~":
-			matched = regexp.MustCompile(muteLabel.Value).MatchString(val)
-		case "!~":
-			matched = !regexp.MustCompile(muteLabel.Value).MatchString(val)
-		default:
-			matched = false
-		}
-
-		if !matched {
-			return false // 只要有一个不匹配，就不静默
-		}
-	}
-
-	return true
+	match, err := models.CompileSilenceMatchers(muteLabels)
+	return err == nil && match(metrics)
 }

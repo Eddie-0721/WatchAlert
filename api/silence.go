@@ -38,6 +38,7 @@ func (silenceController silenceController) API(gin *gin.RouterGroup) {
 	)
 	{
 		b.GET("silenceList", silenceController.List)
+		b.POST("silencePreview", silenceController.Preview)
 	}
 }
 
@@ -93,4 +94,15 @@ func (silenceController silenceController) List(ctx *gin.Context) {
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.SilenceService.List(r)
 	})
+}
+
+func (silenceController silenceController) Preview(ctx *gin.Context) {
+	r := new(types.RequestSilencePreview)
+	if err := ctx.ShouldBindJSON(r); err != nil {
+		ctx.JSON(400, gin.H{"code": 400, "msg": "静默预览参数无效"})
+		return
+	}
+	tid, _ := ctx.Get("TenantID")
+	r.TenantId, _ = tid.(string)
+	Service(ctx, func() (interface{}, interface{}) { return services.SilenceService.Preview(r) })
 }

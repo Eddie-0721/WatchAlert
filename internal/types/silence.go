@@ -4,6 +4,8 @@ import "watchAlert/internal/models"
 
 // RequestSilenceCreate 请求创建静默规则
 type RequestSilenceCreate struct {
+	PreviewHash   string                `json:"previewHash"`
+	PreviewAt     int64                 `json:"previewAt"`
 	TenantId      string                `json:"tenantId"`
 	Name          string                `json:"name"`
 	Labels        []models.SilenceLabel `json:"labels" gorm:"labels;serializer:json"`
@@ -18,6 +20,8 @@ type RequestSilenceCreate struct {
 
 // RequestSilenceUpdate 请求更新静默规则
 type RequestSilenceUpdate struct {
+	PreviewHash   string                `json:"previewHash"`
+	PreviewAt     int64                 `json:"previewAt"`
 	TenantId      string                `json:"tenantId"`
 	Name          string                `json:"name"`
 	ID            string                `json:"id"`
@@ -45,4 +49,27 @@ type RequestSilenceQuery struct {
 type ResponseSilenceList struct {
 	List []models.AlertSilences `json:"list"`
 	models.Page
+}
+
+type RequestSilencePreview struct {
+	TenantId      string                `json:"-"`
+	ID            string                `json:"id"`
+	Name          string                `json:"name"`
+	Comment       string                `json:"comment"`
+	Labels        []models.SilenceLabel `json:"labels"`
+	StartsAt      int64                 `json:"startsAt"`
+	EndsAt        int64                 `json:"endsAt"`
+	FaultCenterId string                `json:"faultCenterId"`
+}
+type SilencePreviewSample struct {
+	Fingerprint string     `json:"fingerprint"`
+	RuleName    string     `json:"ruleName"`
+	Scope       AlertScope `json:"scope"`
+}
+type ResponseSilencePreview struct {
+	PreviewHash string                 `json:"previewHash"`
+	PreviewAt   int64                  `json:"previewAt"`
+	Total       int                    `json:"total"`
+	Samples     []SilencePreviewSample `json:"samples"`
+	Truncated   bool                   `json:"truncated"`
 }

@@ -19,6 +19,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from app.diagnostics import diagnose
 
 try:
     from agents import Agent, OpenAIChatCompletionsModel, Runner, function_tool, set_tracing_disabled
@@ -277,6 +278,16 @@ def sse(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
+class DiagnosticsRequest(BaseModel):
+    modelConfig: ModelConfig = Field(default_factory=ModelConfig)
+
+
+@app.post("/v1/diagnostics")
+async def diagnostics(request: DiagnosticsRequest, x_watchalert_agent_token: str | None = Header(default=None)):
+    require_internal_token(x_watchalert_agent_token)
+    return await diagnose(request.modelConfig, Agent is not None and Runner is not None)
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {
@@ -384,7 +395,7 @@ prometheus.datasources: {}。
 prometheus.query_instant: {datasourceId: string, promql: string}。
 prometheus.query_range: {datasourceId: string, promql: string, start?:Unix秒, end?:Unix秒, step?:30}，范围最长6小时。
 配置了环境范围时，PromQL 的每个向量选择器必须含精确的授权环境条件，不能使用正则或负向条件替代。
-silences.propose_create: {name, labels:[{key,operator:\"==\",value}], startsAt?:Unix秒, endsAt:Unix秒, faultCenterId?, comment?}。
+silences.propose_create: {name, labels:[{key,operator:\"==\",value}], startsAt?:Unix秒, endsAt:Unix秒, faultCenterId, comment}。
 silences.propose_update: {id, name, labels, startsAt, endsAt, faultCenterId, comment}，先查询原配置并保留不修改字段。
 silences.propose_delete: {id}。alerts.propose_claim: {faultCenterId, fingerprints:[string]}。
 工具失败不是无告警；返回列表不是完整总量；不得声称历史查询已完成（目前无历史查询工具）。

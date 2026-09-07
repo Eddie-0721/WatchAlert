@@ -7,6 +7,8 @@ type UserPermissions struct {
 
 func PermissionsInfo() map[string]UserPermissions {
 	return map[string]UserPermissions{
+		"silencePreview":   {Key: "预览静默影响范围", API: "/api/w8t/silence/silencePreview"},
+		"agentDiagnostics": {Key: "诊断 Copilot 连接", API: "/api/w8t/agent/diagnostics"},
 		"agentCapabilities": {
 			Key: "查看 Copilot 能力",
 			API: "/api/w8t/agent/capabilities",

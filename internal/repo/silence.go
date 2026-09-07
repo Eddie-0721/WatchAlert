@@ -70,21 +70,10 @@ func (sr SilenceRepo) Create(r models.AlertSilences) error {
 }
 
 func (sr SilenceRepo) Update(r models.AlertSilences) error {
-	u := Updates{
-		Table: models.AlertSilences{},
-		Where: map[string]interface{}{
-			"tenant_id = ?": r.TenantId,
-			"id = ?":        r.ID,
-		},
-		Updates: r,
-	}
-
-	err := sr.g.Updates(u)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	// Select includes zero-valued status (future silences) while retaining
+	// GORM's JSON serializer for Label conditions.
+	return sr.db.Model(&models.AlertSilences{}).Where("tenant_id = ? AND id = ?", r.TenantId, r.ID).
+		Select("Name", "Labels", "StartsAt", "EndsAt", "UpdateAt", "UpdateBy", "FaultCenterId", "Comment", "Status").Updates(r).Error
 }
 
 func (sr SilenceRepo) Delete(tenantId, id string) error {

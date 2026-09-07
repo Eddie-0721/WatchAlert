@@ -14,6 +14,7 @@ type alertSilenceService struct {
 }
 
 type InterSilenceService interface {
+	Preview(req interface{}) (interface{}, interface{})
 	Create(req interface{}) (interface{}, interface{})
 	Update(req interface{}) (interface{}, interface{})
 	Delete(req interface{}) (interface{}, interface{})
@@ -28,6 +29,13 @@ func newInterSilenceService(ctx *ctx.Context) InterSilenceService {
 
 func (ass alertSilenceService) Create(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestSilenceCreate)
+	p, err := ass.preview(&types.RequestSilencePreview{TenantId: r.TenantId, Name: r.Name, Comment: r.Comment, Labels: r.Labels, StartsAt: r.StartsAt, EndsAt: r.EndsAt, FaultCenterId: r.FaultCenterId})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSilencePreview(r.PreviewHash, r.PreviewAt, p, time.Now().Unix()); err != nil {
+		return nil, err
+	}
 	updateAt := time.Now().Unix()
 	silence := models.AlertSilences{
 		TenantId:      r.TenantId,
@@ -44,20 +52,31 @@ func (ass alertSilenceService) Create(req interface{}) (interface{}, interface{}
 	}
 
 	if r.StartsAt > updateAt {
-		r.Status = 0
+		silence.Status = 0
 	}
 
-	ass.ctx.Redis.Silence().PushAlertMute(silence)
-	err := ass.ctx.DB.Silence().Create(silence)
+	err = ass.ctx.DB.Silence().Create(silence)
 	if err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	ass.ctx.Redis.Silence().PushAlertMute(silence)
+	return silence, nil
 }
 
 func (ass alertSilenceService) Update(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestSilenceUpdate)
+	p, err := ass.preview(&types.RequestSilencePreview{TenantId: r.TenantId, ID: r.ID, Name: r.Name, Comment: r.Comment, Labels: r.Labels, StartsAt: r.StartsAt, EndsAt: r.EndsAt, FaultCenterId: r.FaultCenterId})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSilencePreview(r.PreviewHash, r.PreviewAt, p, time.Now().Unix()); err != nil {
+		return nil, err
+	}
+	var before models.AlertSilences
+	if err := ass.ctx.DB.DB().Where("tenant_id = ? AND id = ?", r.TenantId, r.ID).First(&before).Error; err != nil {
+		return nil, err
+	}
 	silence := models.AlertSilences{
 		TenantId:      r.TenantId,
 		Name:          r.Name,
@@ -72,19 +91,22 @@ func (ass alertSilenceService) Update(req interface{}) (interface{}, interface{}
 		Status:        1,
 	}
 
-	if r.StartsAt > r.UpdateAt {
-		r.Status = 0
+	if r.StartsAt > silence.UpdateAt {
+		silence.Status = 0
 	} else {
-		r.Status = 1
+		silence.Status = 1
 	}
 
-	ass.ctx.Redis.Silence().PushAlertMute(silence)
-	err := ass.ctx.DB.Silence().Update(silence)
+	err = ass.ctx.DB.Silence().Update(silence)
 	if err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	if before.FaultCenterId != silence.FaultCenterId {
+		ass.ctx.Redis.Silence().RemoveAlertMute(before.TenantId, before.FaultCenterId, before.ID)
+	}
+	ass.ctx.Redis.Silence().PushAlertMute(silence)
+	return silence, nil
 }
 
 func (ass alertSilenceService) Delete(req interface{}) (interface{}, interface{}) {

@@ -26,6 +26,7 @@ type agentService struct {
 }
 
 type InterAgentService interface {
+	Diagnostics(context.Context, string, string) (AgentDiagnostics, error)
 	CreateSession(tenantId, userId string, req *types.RequestAgentSessionCreate) (models.AgentSession, error)
 	GetSession(tenantId, userId, sessionId string) (types.ResponseAgentSessionDetail, error)
 	ListSessions(tenantId, userId string) ([]models.AgentSession, error)
@@ -665,7 +666,15 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if payload.FaultCenterId != "" && !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
 			return nil, nil, "", fmt.Errorf("目标故障中心不存在或不属于当前租户")
 		}
-		return payload, map[string]interface{}{"action": "创建静默", "name": payload.Name, "labels": payload.Labels, "startsAt": payload.StartsAt, "endsAt": payload.EndsAt, "faultCenterId": payload.FaultCenterId, "comment": payload.Comment}, "medium", nil
+		impact, err := (&alertSilenceService{ctx: a.ctx}).preview(&types.RequestSilencePreview{TenantId: claims.TenantId, Name: payload.Name, Comment: payload.Comment, Labels: payload.Labels, StartsAt: payload.StartsAt, EndsAt: payload.EndsAt, FaultCenterId: payload.FaultCenterId})
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if err := validateSilencePreview(payload.PreviewHash, payload.PreviewAt, impact, now); err != nil {
+			return nil, nil, "", err
+		}
+		payload.PreviewHash, payload.PreviewAt = impact.PreviewHash, impact.PreviewAt
+		return payload, map[string]interface{}{"impact": impact, "action": "创建静默", "name": payload.Name, "labels": payload.Labels, "startsAt": payload.StartsAt, "endsAt": payload.EndsAt, "faultCenterId": payload.FaultCenterId, "comment": payload.Comment}, "medium", nil
 	case "silences.propose_update":
 		var payload types.RequestSilenceUpdate
 		if err := decodeAgentArguments(arguments, &payload); err != nil {
@@ -701,7 +710,15 @@ func (a *agentService) buildActionPreview(claims agenttoken.Claims, tool string,
 		if payload.FaultCenterId != "" && !a.faultCenterExists(claims.TenantId, payload.FaultCenterId) {
 			return nil, nil, "", fmt.Errorf("目标故障中心不存在或不属于当前租户")
 		}
-		return payload, map[string]interface{}{"action": "修改静默", "before": before, "after": payload}, "medium", nil
+		impact, err := (&alertSilenceService{ctx: a.ctx}).preview(&types.RequestSilencePreview{TenantId: claims.TenantId, ID: payload.ID, Name: payload.Name, Comment: payload.Comment, Labels: payload.Labels, StartsAt: payload.StartsAt, EndsAt: payload.EndsAt, FaultCenterId: payload.FaultCenterId})
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if err := validateSilencePreview(payload.PreviewHash, payload.PreviewAt, impact, now); err != nil {
+			return nil, nil, "", err
+		}
+		payload.PreviewHash, payload.PreviewAt = impact.PreviewHash, impact.PreviewAt
+		return payload, map[string]interface{}{"impact": impact, "action": "修改静默", "before": before, "after": payload}, "medium", nil
 	case "silences.propose_delete":
 		id := stringArgument(arguments, "id")
 		if id == "" {

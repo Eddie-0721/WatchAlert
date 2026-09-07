@@ -19,6 +19,7 @@ func (agentController agentController) API(gin *gin.RouterGroup) {
 	read := gin.Group("agent")
 	read.Use(middleware.Auth(), middleware.Permission(), middleware.ParseTenant())
 	{
+		read.POST("diagnostics", agentController.Diagnostics)
 		read.GET("capabilities", agentController.Capabilities)
 		read.GET("sessionList", agentController.ListSessions)
 		read.GET("sessionGet", agentController.GetSession)
@@ -146,4 +147,14 @@ func agentRequestScope(ctx *gin.Context) (string, string, error) {
 		return "", "", fmt.Errorf("用户上下文无效")
 	}
 	return tenantValue, userValue, nil
+}
+
+func (agentController agentController) Diagnostics(ctx *gin.Context) {
+	Service(ctx, func() (interface{}, interface{}) {
+		tenantID, userID, err := agentRequestScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return services.AgentService.Diagnostics(ctx.Request.Context(), tenantID, userID)
+	})
 }
