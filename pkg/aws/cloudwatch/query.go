@@ -2,15 +2,16 @@ package cloudwatch
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
-	log "github.com/sirupsen/logrus"
 )
 
-func MetricDataQuery(client *cloudwatch.Client, query CloudWatchQuery) ([]time.Time, []float64) {
+func MetricDataQuery(client *cloudwatch.Client, query CloudWatchQuery) ([]time.Time, []float64, error) {
 	input := &cloudwatch.GetMetricDataInput{
 		MetricDataQueries: []types.MetricDataQuery{
 			{
@@ -34,20 +35,34 @@ func MetricDataQuery(client *cloudwatch.Client, query CloudWatchQuery) ([]time.T
 		StartTime: aws.Time(query.Form),
 		EndTime:   aws.Time(query.To),
 	}
-	output, err := client.GetMetricData(context.TODO(), input)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := client.GetMetricData(ctx, input)
 	if err != nil {
-		log.Errorf(err.Error())
-		return nil, nil
+		return nil, nil, err
+	}
+	return completeMetricData(output)
+}
+
+func completeMetricData(output *cloudwatch.GetMetricDataOutput) ([]time.Time, []float64, error) {
+	if output == nil || aws.ToString(output.NextToken) != "" || len(output.Messages) > 0 {
+		return nil, nil, fmt.Errorf("CloudWatch result incomplete")
 	}
 
 	var times []time.Time
 	var values []float64
 	for _, result := range output.MetricDataResults {
+		if result.StatusCode != types.StatusCodeComplete || len(result.Messages) > 0 || len(result.Values) != len(result.Timestamps) {
+			return nil, nil, fmt.Errorf("CloudWatch metric result incomplete")
+		}
 		for k, value := range result.Values {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, nil, fmt.Errorf("CloudWatch metric contains invalid samples")
+			}
 			times = append(times, result.Timestamps[k])
 			values = append(values, value)
 		}
 	}
 
-	return times, values
+	return times, values, nil
 }

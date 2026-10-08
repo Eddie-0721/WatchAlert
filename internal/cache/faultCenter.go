@@ -34,7 +34,7 @@ func newFaultCenterCacheInterface(r *redis.Client) FaultCenterCacheInterface {
 func (f *FaultCenterCache) PushFaultCenterInfo(center models.FaultCenter) {
 	err := f.rc.Set(string(models.BuildFaultCenterInfoCacheKey(center.TenantId, center.ID)), tools.JsonMarshalToString(center), 0).Err()
 	if err != nil {
-		logc.Errorf(context.Background(), err.Error())
+		logc.Errorf(context.Background(), "%s", err.Error())
 		return
 	}
 }

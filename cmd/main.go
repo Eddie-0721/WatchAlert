@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
-	"sync"
 	"watchAlert/alert"
 	"watchAlert/config"
 	"watchAlert/internal/cache"
@@ -138,33 +137,10 @@ func importClientPools(ctx *ctx.Context) {
 }
 
 func pushMuteRuleToRedis() {
-	list, _, err := ctx.DB.Silence().List("", "", "", "all", models.Page{
-		Index: 0,
-		Size:  1000,
-	})
+	loaded, err := services.LoadSilenceCache(ctx.DB.Silence(), ctx.Redis.Silence())
 	if err != nil {
-		logc.Errorf(ctx.Ctx, "获取静默规则列表失败, err: %s", err.Error())
+		logc.Errorf(ctx.Ctx, "静默加载未完成，已同步 %d 条: %v", loaded, err)
 		return
 	}
-
-	if len(list) == 0 {
-		return
-	}
-
-	logc.Infof(ctx.Ctx, "获取到 %d 个静默规则", len(list))
-
-	var wg sync.WaitGroup
-	wg.Add(len(list))
-	for _, silence := range list {
-		go func(silence models.AlertSilences) {
-			defer func() {
-				wg.Done()
-			}()
-
-			ctx.Redis.Silence().PushAlertMute(silence)
-		}(silence)
-	}
-
-	wg.Wait()
-	logc.Infof(ctx.Ctx, "所有静默规则加载完毕！")
+	logc.Infof(ctx.Ctx, "静默规则加载完成，共 %d 条", loaded)
 }

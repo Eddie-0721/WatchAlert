@@ -15,7 +15,7 @@ func validateDatasourceReferences(repository repo.InterDatasourceRepo, tenant, k
 		if err != nil {
 			return fmt.Errorf("数据源不存在或不属于当前租户")
 		}
-		if ds.Type != kind {
+		if ds.Type != kind && !(ds.Type == "Kubernetes" && kind == "KubernetesEvent") {
 			return fmt.Errorf("数据源类型与规则不匹配")
 		}
 	}

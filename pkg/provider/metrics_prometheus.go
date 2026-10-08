@@ -115,9 +115,21 @@ type MetricResult struct {
 func (v PrometheusProvider) Query(promQL string) ([]Metrics, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(v.Timeout)*time.Second)
 	defer cancel()
-	result, _, err := v.client.Query(ctx, promQL, time.Now(), v1.WithTimeout(time.Duration(v.Timeout)*time.Second))
+	result, warnings, err := v.client.Query(ctx, promQL, time.Now(), v1.WithTimeout(time.Duration(v.Timeout)*time.Second))
 	if err != nil {
 		return nil, err
+	}
+	if len(warnings) != 0 {
+		return nil, fmt.Errorf("Prometheus query returned warnings; result may be incomplete")
+	}
+	vector, ok := result.(model.Vector)
+	if !ok {
+		return nil, fmt.Errorf("Prometheus instant query did not return a vector")
+	}
+	for _, sample := range vector {
+		if sample == nil || math.IsNaN(float64(sample.Value)) || math.IsInf(float64(sample.Value), 0) {
+			return nil, fmt.Errorf("Prometheus query returned invalid samples")
+		}
 	}
 	return Vectors(result), nil
 }

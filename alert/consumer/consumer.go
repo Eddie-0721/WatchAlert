@@ -336,7 +336,10 @@ func (c *Consume) processSilenceRule(faultCenter models.FaultCenter) {
 			}
 		}
 
-		silenceCtx.PushAlertMute(*muteRule)
+		if err := silenceCtx.PushAlertMute(*muteRule); err != nil {
+			logc.Errorf(c.ctx.Ctx, "Silence cache synchronization failed, id: %s", muteRule.ID)
+			return
+		}
 	}
 }
 

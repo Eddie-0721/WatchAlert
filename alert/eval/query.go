@@ -16,7 +16,7 @@ import (
 )
 
 // Metrics Prometheus 数据源
-func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) []string {
+func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	pools := ctx.Redis.ProviderPools()
 	var (
 		resQuery       []provider.Metrics
@@ -25,12 +25,13 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 		curFingerprints []string
 		// 按指纹分组存储事件，相同规则只保留最高优先级的事件
 		highestPriorityEvents = make(map[string]struct{})
+		truncated             bool
 	)
 
 	cli, err := pools.GetClient(datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-		return nil
+		return failedEvaluation("client_unavailable")
 	}
 
 	switch datasourceType {
@@ -38,27 +39,35 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 		resQuery, err = cli.(provider.PrometheusProvider).Query(rule.PrometheusConfig.PromQL)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Prometheus查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, PromQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.PrometheusConfig.PromQL, err)
-			return nil
+			return failedEvaluation("query_failed")
 		}
 
 		// 检查查询结果数量，避免过多结果导致系统压力
 		if len(resQuery) > 1000 {
 			logc.Errorf(ctx.Ctx, "Prometheus查询结果过多，可能影响性能，今提取前 1000 个数据点，规则ID: %s, 规则名称: %s, 结果数量: %d", rule.RuleId, rule.RuleName, len(resQuery))
 			resQuery = resQuery[:1000]
+			truncated = true
 		}
 
 		externalLabels = cli.(provider.PrometheusProvider).GetExternalLabels()
 	default:
 		logc.Errorf(ctx.Ctx, "不支持的指标类型, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 类型: %s", rule.RuleId, rule.RuleName, datasourceId, datasourceType)
-		return nil
-	}
-
-	if len(resQuery) == 0 {
-		return nil
+		return failedEvaluation("unsupported_datasource")
 	}
 
 	// 按优先级排序规则（P0 > P1 > P2）
 	rules := sortRulesByPriority(rule.PrometheusConfig.Rules)
+	if len(rules) == 0 {
+		return failedEvaluation("missing_conditions")
+	}
+	for _, condition := range rules {
+		if _, _, err := process.ProcessRuleExpr(condition.Expr); err != nil {
+			return failedEvaluation("invalid_condition")
+		}
+	}
+	if len(resQuery) == 0 {
+		return completeEvaluation(nil)
+	}
 
 	for _, v := range resQuery {
 		// 避免共享引用导致的指纹不一致问题
@@ -165,7 +174,10 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 		}
 	}
 
-	return curFingerprints
+	if truncated {
+		return truncatedEvaluation(curFingerprints)
+	}
+	return completeEvaluation(curFingerprints)
 }
 
 // sortRulesByPriority 按优先级排序规则
@@ -199,7 +211,7 @@ func getPriorityValue(severity string) int {
 }
 
 // Logs 包含 AliSLS、Loki、ElasticSearch 数据源
-func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) []string {
+func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var (
 		// 日志信息
 		log provider.Logs
@@ -217,7 +229,7 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 	cli, err := pools.GetClient(datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-		return []string{}
+		return failedEvaluation("client_unavailable")
 	}
 
 	switch datasourceType {
@@ -233,14 +245,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		log, count, err = cli.(provider.LokiProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Loki查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.LokiConfig.LogQL, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.LokiProvider).GetExternalLabels()
 		operator, value, err := process.ProcessRuleExpr(rule.LogEvalCondition)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "处理日志规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.LogEvalCondition, err)
-			return []string{}
+			return failedEvaluation("invalid_condition")
 		}
 
 		evalOptions = models.EvalCondition{
@@ -262,14 +274,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		log, count, err = cli.(provider.AliCloudSlsDsProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "AliCloudSLS查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.AliCloudSLSConfig.LogQL, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.AliCloudSlsDsProvider).GetExternalLabels()
 		operator, value, err := process.ProcessRuleExpr(rule.LogEvalCondition)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "处理日志规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.LogEvalCondition, err)
-			return []string{}
+			return failedEvaluation("invalid_condition")
 		}
 
 		evalOptions = models.EvalCondition{
@@ -291,14 +303,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		log, count, err = cli.(provider.ElasticSearchDsProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "ElasticSearch查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 索引: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.ElasticSearchConfig.Index, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.ElasticSearchDsProvider).GetExternalLabels()
 		operator, value, err := process.ProcessRuleExpr(rule.LogEvalCondition)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "处理日志规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.LogEvalCondition, err)
-			return []string{}
+			return failedEvaluation("invalid_condition")
 		}
 
 		evalOptions = models.EvalCondition{
@@ -319,14 +331,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		log, count, err = cli.(provider.VictoriaLogsProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "VictoriaLogs查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.VictoriaLogsConfig.LogQL, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.VictoriaLogsProvider).GetExternalLabels()
 		operator, value, err := process.ProcessRuleExpr(rule.LogEvalCondition)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "处理日志规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.LogEvalCondition, err)
-			return []string{}
+			return failedEvaluation("invalid_condition")
 		}
 
 		evalOptions = models.EvalCondition{
@@ -343,14 +355,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		log, count, err = cli.(provider.ClickHouseProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "ClickHouse查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.ClickHouseConfig.LogQL, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.ClickHouseProvider).GetExternalLabels()
 		operator, value, err := process.ProcessRuleExpr(rule.LogEvalCondition)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "处理日志规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.LogEvalCondition, err)
-			return []string{}
+			return failedEvaluation("invalid_condition")
 		}
 
 		evalOptions = models.EvalCondition{
@@ -360,8 +372,11 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		}
 	}
 
-	if count <= 0 {
-		return []string{}
+	if count < 0 {
+		return failedEvaluation("invalid_sample_count")
+	}
+	if count == 0 {
+		return completeEvaluation(nil)
 	}
 
 	// 唯一指纹基于 RuleId
@@ -414,11 +429,11 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 		process.PushEventToFaultCenter(ctx, event())
 	}
 
-	return curFingerprints
+	return completeEvaluation(curFingerprints)
 }
 
 // Traces 包含 Jaeger 数据源
-func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) []string {
+func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var (
 		queryRes       []provider.Traces
 		externalLabels map[string]interface{}
@@ -433,7 +448,7 @@ func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.A
 		cli, err := pools.GetClient(datasourceId)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "获取Jaeger数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-			return []string{}
+			return failedEvaluation("client_unavailable")
 		}
 
 		queryOptions := provider.TraceQueryOptions{
@@ -445,7 +460,7 @@ func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.A
 		queryRes, err = cli.(provider.JaegerDsProvider).Query(queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Jaeger查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 服务: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.JaegerConfig.Service, err)
-			return []string{}
+			return failedEvaluation("query_failed")
 		}
 
 		externalLabels = cli.(provider.JaegerDsProvider).GetExternalLabels()
@@ -478,16 +493,16 @@ func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.A
 		process.PushEventToFaultCenter(ctx, &event)
 	}
 
-	return curFingerprints
+	return completeEvaluation(curFingerprints)
 }
 
-func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) []string {
+func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var externalLabels map[string]interface{}
 	pools := ctx.Redis.ProviderPools()
 	cfg, err := pools.GetClient(datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取CloudWatch数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-		return []string{}
+		return failedEvaluation("client_unavailable")
 	}
 
 	externalLabels = cfg.(provider.AwsConfig).GetExternalLabels()
@@ -497,6 +512,9 @@ func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule mode
 	startsAt := tools.ParserDuration(curAt, rule.CloudWatchConfig.Period, "m")
 
 	var curFingerprints []string
+	if len(rule.CloudWatchConfig.Endpoints) == 0 {
+		return failedEvaluation("missing_endpoints")
+	}
 	for _, endpoint := range rule.CloudWatchConfig.Endpoints {
 		query := cloudwatch.CloudWatchQuery{
 			Endpoint:   endpoint,
@@ -508,9 +526,12 @@ func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule mode
 			Form:       startsAt,
 			To:         curAt,
 		}
-		_, values := cloudwatch.MetricDataQuery(cli, query)
+		_, values, err := cloudwatch.MetricDataQuery(cli, query)
+		if err != nil {
+			return failedEvaluation("query_failed")
+		}
 		if len(values) == 0 {
-			return []string{}
+			return failedEvaluation("no_metric_samples")
 		}
 
 		event := process.BuildEvent(rule, func() map[string]interface{} {
@@ -535,28 +556,28 @@ func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule mode
 			ExpectedValue: float64(rule.CloudWatchConfig.Threshold),
 		}
 
-		curFingerprints = append(curFingerprints, event.Fingerprint)
 		if process.EvalCondition(options) {
+			curFingerprints = append(curFingerprints, event.Fingerprint)
 			process.PushEventToFaultCenter(ctx, &event)
 		}
 	}
 
-	return curFingerprints
+	return completeEvaluation(curFingerprints)
 }
 
-func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) []string {
+func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	// 获取数据源实例信息
-	datasourceObj, err := ctx.DB.Datasource().GetInstance(datasourceId)
+	datasourceObj, err := ctx.DB.Datasource().GetForTenant(rule.TenantId, datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源实例失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-		return []string{}
+		return failedEvaluation("datasource_unavailable")
 	}
 
 	pools := ctx.Redis.ProviderPools()
 	cli, err := pools.GetClient(datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取Kubernetes数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
-		return []string{}
+		return failedEvaluation("client_unavailable")
 	}
 
 	k8sClient := cli.(provider.KubernetesClient)
@@ -566,12 +587,12 @@ func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule
 	k8sEventMap, err := k8sClient.GetWarningEvent(rule.KubernetesConfig.Reason, rule.KubernetesConfig.Scope, rule.KubernetesConfig.Filter)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取Kubernetes警告事件失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 原因: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.KubernetesConfig.Reason, err)
-		return []string{}
+		return failedEvaluation("query_failed")
 	}
 
 	// 无事件返回
 	if len(k8sEventMap) == 0 {
-		return []string{}
+		return completeEvaluation(nil)
 	}
 
 	// 遍历事件组，评估并生成告警
@@ -624,5 +645,5 @@ func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule
 
 	}
 
-	return curFingerprints
+	return completeEvaluation(curFingerprints)
 }

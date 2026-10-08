@@ -10,6 +10,9 @@ import (
 type scopeDatasourceRepo struct{ repo.InterDatasourceRepo }
 
 func (scopeDatasourceRepo) GetForTenant(tenant, id string) (models.AlertDataSource, error) {
+	if tenant == "a" && id == "k8s" {
+		return models.AlertDataSource{TenantId: "a", ID: id, Type: "Kubernetes"}, nil
+	}
 	if tenant != "a" || id != "local" {
 		return models.AlertDataSource{}, fmt.Errorf("not found")
 	}
@@ -27,6 +30,9 @@ func TestDatasourceReferencesRequireTenantAndType(t *testing.T) {
 		{"", "Prometheus", []string{"local"}, false},
 		{"a", "Loki", []string{"local"}, false},
 		{"a", "Prometheus", nil, false},
+		{"a", "KubernetesEvent", []string{"k8s"}, true},
+		{"b", "KubernetesEvent", []string{"k8s"}, false},
+		{"a", "Prometheus", []string{"k8s"}, false},
 	} {
 		if err := validateDatasourceReferences(scopeDatasourceRepo{}, tc.tenant, tc.kind, tc.ids); (err == nil) != tc.want {
 			t.Fatal("unexpected reference validation", tc, err)

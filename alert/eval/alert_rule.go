@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 	"watchAlert/internal/ctx"
@@ -37,7 +36,7 @@ const (
 )
 
 // 数据源处理器映射
-var datasourceHandlers = map[string]func(*ctx.Context, string, string, models.AlertRule) []string{
+var datasourceHandlers = map[string]func(*ctx.Context, string, string, models.AlertRule) evaluationResult{
 	DatasourceTypePrometheus:      metrics,
 	DatasourceTypeAliCloudSLS:     logs,
 	DatasourceTypeLoki:            logs,
@@ -62,7 +61,8 @@ type (
 
 	// AlertRule 告警规则
 	AlertRule struct {
-		ctx *ctx.Context
+		ctx          *ctx.Context
+		lastComplete sync.Map
 	}
 )
 
@@ -82,6 +82,7 @@ func (t *AlertRule) Submit(rule models.AlertRule) {
 }
 
 func (t *AlertRule) Stop(ruleId string) {
+	t.lastComplete.Delete(ruleId)
 	t.ctx.Mux.Lock()
 	defer t.ctx.Mux.Unlock()
 
@@ -143,20 +144,26 @@ func (t *AlertRule) executeTask(rule models.AlertRule, taskChan chan struct{}) {
 	}
 
 	// 并发处理数据源
-	curFingerprints := t.processDatasources(rule)
+	result := t.processDatasources(rule)
+	if result.Status != "complete" {
+		t.lastComplete.Delete(rule.RuleId)
+		logc.Errorf(t.ctx.Ctx, "Rule evaluation incomplete; recovery skipped. RuleId: %s, Reason: %s", rule.RuleId, result.Reason)
+		return
+	}
 
 	// 处理恢复逻辑
-	t.Recover(rule.TenantId, rule.RuleId,
+	_, consecutive := t.lastComplete.LoadOrStore(rule.RuleId, true)
+	t.recoverComplete(rule.TenantId, rule.RuleId,
 		models.BuildAlertEventCacheKey(rule.TenantId, rule.FaultCenterId),
 		models.BuildFaultCenterInfoCacheKey(rule.TenantId, rule.FaultCenterId),
-		curFingerprints)
+		result.Fingerprints, !consecutive)
 }
 
 // processDatasources 处理数据源
-func (t *AlertRule) processDatasources(rule models.AlertRule) []string {
+func (t *AlertRule) processDatasources(rule models.AlertRule) evaluationResult {
 	var (
-		curFingerprints []string
-		fingerprintChan = make(chan []string, len(rule.DatasourceIdList))
+		results         []evaluationResult
+		fingerprintChan = make(chan evaluationResult, len(rule.DatasourceIdList))
 		wg              sync.WaitGroup
 	)
 
@@ -165,10 +172,7 @@ func (t *AlertRule) processDatasources(rule models.AlertRule) []string {
 		wg.Add(1)
 		go func(dsId string) {
 			defer wg.Done()
-			fingerprints := t.processSingleDatasource(dsId, rule)
-			if len(fingerprints) > 0 {
-				fingerprintChan <- fingerprints
-			}
+			fingerprintChan <- t.processSingleDatasource(dsId, rule)
 		}(dsId)
 	}
 
@@ -177,38 +181,46 @@ func (t *AlertRule) processDatasources(rule models.AlertRule) []string {
 		close(fingerprintChan)
 	}()
 
-	for fingerprints := range fingerprintChan {
-		curFingerprints = append(curFingerprints, fingerprints...)
+	for result := range fingerprintChan {
+		results = append(results, result)
 	}
 
-	return curFingerprints
+	return combineEvaluations(results)
 }
 
 // processSingleDatasource 处理单个数据源
-func (t *AlertRule) processSingleDatasource(dsId string, rule models.AlertRule) []string {
-	instance, err := t.ctx.DB.Datasource().GetInstance(dsId)
+func (t *AlertRule) processSingleDatasource(dsId string, rule models.AlertRule) (result evaluationResult) {
+	defer func() {
+		if recover() != nil {
+			// A worker panic must neither terminate the process nor look like recovery.
+			result = failedEvaluation("datasource_worker_panic")
+			logc.Errorf(t.ctx.Ctx, "Datasource evaluation panic, RuleId: %s, DatasourceId: %s", rule.RuleId, dsId)
+		}
+	}()
+	instance, err := t.ctx.DB.Datasource().GetForTenant(rule.TenantId, dsId)
 	if err != nil {
 		logc.Errorf(t.ctx.Ctx, "Failed to get datasource instance %s: %v", dsId, err)
-		return nil
+		return failedEvaluation("datasource_unavailable")
+	}
+
+	if !instance.GetEnabled() {
+		return failedEvaluation("datasource_disabled")
+	}
+	if instance.Type != rule.DatasourceType && !(instance.Type == "Kubernetes" && rule.DatasourceType == DatasourceTypeKubernetesEvent) {
+		return failedEvaluation("datasource_type_mismatch")
 	}
 
 	// 检查数据源健康状态
 	if ok, _ := provider.CheckDatasourceHealth(instance); !ok {
 		logc.Errorf(t.ctx.Ctx, "Datasource %s is unhealthy", dsId)
-		return nil
-	}
-
-	// 检查数据源是否启用
-	if !*instance.Enabled {
-		logc.Errorf(t.ctx.Ctx, "Datasource %s is disabled", dsId)
-		return nil
+		return failedEvaluation("datasource_unhealthy")
 	}
 
 	// 调用处理器
 	handler, exists := datasourceHandlers[rule.DatasourceType]
 	if !exists {
 		logc.Errorf(t.ctx.Ctx, "Unsupported datasource type: %s", rule.DatasourceType)
-		return nil
+		return failedEvaluation("unsupported_datasource")
 	}
 
 	return handler(t.ctx, dsId, instance.Type, rule)
@@ -220,6 +232,10 @@ func (t *AlertRule) getEvalTimeDuration(evalInterval int64) time.Duration {
 }
 
 func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertEventCacheKey, faultCenterInfoKey models.FaultCenterInfoCacheKey, curFingerprints []string) {
+	t.recoverComplete(tenantId, ruleId, eventCacheKey, faultCenterInfoKey, curFingerprints, false)
+}
+
+func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey models.AlertEventCacheKey, faultCenterInfoKey models.FaultCenterInfoCacheKey, curFingerprints []string, restartWindow bool) {
 	// 过滤空指纹
 	var filteredCurFingerprints []string
 	for _, fp := range curFingerprints {
@@ -238,6 +254,7 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 	// 获取所有的故障中心告警事件
 	events, err := t.ctx.Redis.Alert().GetAllEvents(eventCacheKey)
 	if err != nil {
+		t.lastComplete.Delete(ruleId)
 		logc.Errorf(t.ctx.Ctx, "AlertRule.Recover: Failed to get all events: %v", err)
 		return
 	}
@@ -251,7 +268,7 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 			continue
 		}
 
-		if !strings.Contains(event.RuleId, ruleId) {
+		if event == nil || event.RuleId != ruleId || event.TenantId != tenantId {
 			continue
 		}
 
@@ -276,7 +293,7 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 				continue
 			}
 			event, ok := events[fingerprint]
-			if !ok {
+			if !ok || event == nil || event.RuleId != ruleId || event.TenantId != tenantId {
 				continue
 			}
 
@@ -287,7 +304,10 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 				logc.Errorf(t.ctx.Ctx, "Failed to transition to「alerting」state for fingerprint %s: %v", fingerprint, err)
 				continue
 			}
-			t.ctx.Redis.Alert().PushAlertEvent(newEvent)
+			if err := t.ctx.Redis.Alert().PushAlertEvent(newEvent); err != nil {
+				t.lastComplete.Delete(ruleId)
+				continue
+			}
 			t.ctx.Redis.PendingRecover().Delete(tenantId, ruleId, fingerprint)
 		}
 	}
@@ -316,11 +336,25 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 				continue
 			}
 			// 记录当前时间
-			t.ctx.Redis.PendingRecover().Set(tenantId, ruleId, fingerprint, curTime)
-			t.ctx.Redis.Alert().PushAlertEvent(newEvent)
+			if err := t.ctx.Redis.PendingRecover().Set(tenantId, ruleId, fingerprint, curTime); err != nil {
+				t.lastComplete.Delete(ruleId)
+				continue
+			}
+			if err := t.ctx.Redis.Alert().PushAlertEvent(newEvent); err != nil {
+				t.lastComplete.Delete(ruleId)
+			}
 			continue
 		} else if err != nil {
+			t.lastComplete.Delete(ruleId)
 			logc.Errorf(t.ctx.Ctx, "Failed to get「pending_recovery」time for fingerprint %s: %v", fingerprint, err)
+			continue
+		}
+
+		if restartWindow && newEvent.Status == models.StatePendingRecovery {
+			// Unknown/failed time must not count towards a continuous recovery window.
+			if err := t.ctx.Redis.PendingRecover().Set(tenantId, ruleId, fingerprint, curTime); err != nil {
+				t.lastComplete.Delete(ruleId)
+			}
 			continue
 		}
 
@@ -334,7 +368,10 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 				continue
 			}
 			// 更新告警事件
-			t.ctx.Redis.Alert().PushAlertEvent(newEvent)
+			if err := t.ctx.Redis.Alert().PushAlertEvent(newEvent); err != nil {
+				t.lastComplete.Delete(ruleId)
+				continue
+			}
 			// 恢复后继续处理下一个事件
 			t.ctx.Redis.PendingRecover().Delete(tenantId, ruleId, fingerprint)
 			continue
@@ -425,6 +462,7 @@ func (t *AlertRule) StopAllEvals() {
 	// 取消所有评估任务
 	for ruleId, cancel := range t.ctx.ContextMap {
 		cancel()
+		t.lastComplete.Delete(ruleId)
 		delete(t.ctx.ContextMap, ruleId)
 	}
 

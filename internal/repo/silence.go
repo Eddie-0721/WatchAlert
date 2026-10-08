@@ -50,7 +50,10 @@ func (sr SilenceRepo) List(tenantId, faultCenterId, query string, status string,
 		db.Where("status = ?", status)
 	}
 
-	db.Count(&count)
+	if err := db.Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+	db.Order("id ASC")
 	db.Limit(int(page.Size)).Offset(int((page.Index - 1) * page.Size))
 	err := db.Find(&silenceList).Error
 	if err != nil {

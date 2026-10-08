@@ -81,7 +81,7 @@ func (v VictoriaLogsProvider) Query(options LogQueryOptions) (Logs, int, error) 
 	if res.StatusCode != 200 {
 		errMsg := fmt.Sprintf("查询VictoriaLogs失败: %s", string(respBody))
 		logc.Error(v.Ctx, errMsg)
-		return Logs{}, 0, fmt.Errorf(errMsg)
+		return Logs{}, 0, fmt.Errorf("%s", errMsg)
 	}
 
 	var (

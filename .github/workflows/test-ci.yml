@@ -12,7 +12,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build -o /tmp/watchalert ./cmd/main.go
-      - run: go test ./api ./internal/middleware ./internal/repo ./internal/services ./internal/models ./pkg/tools ./pkg/agenttoken ./pkg/secretbox ./pkg/oidc
+      - run: go test ./api ./internal/middleware ./internal/repo ./internal/services ./internal/models ./internal/cache ./alert/eval ./pkg/provider ./pkg/aws/cloudwatch ./pkg/tools ./pkg/agenttoken ./pkg/secretbox ./pkg/oidc
       # This remains a legacy compatibility check until R0.4 migrates the
       # reference. The independent WatchAlert-agent repository owns its CI.
       - uses: actions/setup-python@v5

@@ -300,6 +300,13 @@ func (a *agentService) ConfirmAction(tenantId, userId string, req *types.Request
 	}
 
 	result, executeErr := a.executeConfirmedAction(action, tenantId, userId)
+	return a.finishAction(action, result, executeErr)
+}
+
+// A side effect may already have happened. Never report success or make the
+// action confirmable again when its terminal state cannot be persisted.
+func (a *agentService) finishAction(action models.AgentPendingAction, result interface{}, executeErr error) (models.AgentPendingAction, error) {
+	action.Status = "executing"
 	resultBytes, _ := json.Marshal(result)
 	updated := map[string]interface{}{"updated_at": time.Now().Unix(), "result": string(resultBytes)}
 	if executeErr != nil {
@@ -308,8 +315,14 @@ func (a *agentService) ConfirmAction(tenantId, userId string, req *types.Request
 	} else {
 		updated["status"] = "executed"
 	}
-	_ = a.ctx.DB.DB().Model(&models.AgentPendingAction{}).Where("id = ?", action.ID).Updates(updated).Error
-	_ = a.ctx.DB.DB().Where("id = ?", action.ID).First(&action).Error
+	write := a.ctx.DB.DB().Model(&models.AgentPendingAction{}).
+		Where("id = ? AND tenant_id = ? AND user_id = ? AND status = ?", action.ID, action.TenantId, action.UserId, "executing").Updates(updated)
+	if write.Error != nil || write.RowsAffected != 1 {
+		return action, fmt.Errorf("操作可能已生效，但执行记录未能确认；请核对目标状态并联系管理员，不要重复执行（操作 ID：%s）", action.ID)
+	}
+	if err := a.ctx.DB.DB().Where("id = ? AND tenant_id = ? AND user_id = ?", action.ID, action.TenantId, action.UserId).First(&action).Error; err != nil {
+		return action, fmt.Errorf("执行记录读取失败，请核对目标状态，不要重复执行（操作 ID：%s）", action.ID)
+	}
 	return action, executeErr
 }
 

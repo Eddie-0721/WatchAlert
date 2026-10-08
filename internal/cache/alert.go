@@ -21,7 +21,7 @@ type (
 
 	// AlertCacheInterface 定义了事件缓存的操作接口
 	AlertCacheInterface interface {
-		PushAlertEvent(event *models.AlertCurEvent)
+		PushAlertEvent(event *models.AlertCurEvent) error
 		RemoveAlertEvent(tenantId, faultCenterId, fingerprint string)
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
@@ -37,9 +37,9 @@ func newAlertCacheInterface(r *redis.Client) AlertCacheInterface {
 }
 
 // PushAlertEvent 将事件推送到故障中心的缓存中
-func (a *AlertCache) PushAlertEvent(event *models.AlertCurEvent) {
+func (a *AlertCache) PushAlertEvent(event *models.AlertCurEvent) error {
 	key := models.BuildAlertEventCacheKey(event.TenantId, event.FaultCenterId)
-	a.setEventCacheHash(key, event.Fingerprint, tools.JsonMarshalToString(event))
+	return a.setEventCacheHash(key, event.Fingerprint, tools.JsonMarshalToString(event))
 }
 
 // RemoveAlertEvent 从故障中心的缓存中移除事件
@@ -106,8 +106,8 @@ func (a *AlertCache) GetEventFromCache(tenantId, faultCenterId, fingerprint stri
 }
 
 // 封装 Redis 操作
-func (a *AlertCache) setEventCacheHash(key models.AlertEventCacheKey, field, value string) {
-	a.rc.HSet(string(key), field, value)
+func (a *AlertCache) setEventCacheHash(key models.AlertEventCacheKey, field, value string) error {
+	return a.rc.HSet(string(key), field, value).Err()
 }
 
 func (a *AlertCache) deleteEventCacheHash(key models.AlertEventCacheKey, field string) {

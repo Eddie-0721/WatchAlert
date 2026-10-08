@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"time"
 	"watchAlert/internal/ctx"
 	models "watchAlert/internal/models"
@@ -60,7 +61,9 @@ func (ass alertSilenceService) Create(req interface{}) (interface{}, interface{}
 		return nil, err
 	}
 
-	ass.ctx.Redis.Silence().PushAlertMute(silence)
+	if err := ass.ctx.Redis.Silence().PushAlertMute(silence); err != nil {
+		return silence, fmt.Errorf("静默已保存（%s），但缓存同步失败，尚未确认生效；请勿重复创建，请核对后重试更新", silence.ID)
+	}
 	return silence, nil
 }
 
@@ -97,24 +100,44 @@ func (ass alertSilenceService) Update(req interface{}) (interface{}, interface{}
 		silence.Status = 1
 	}
 
+	if before.FaultCenterId != silence.FaultCenterId {
+		if err := ass.ctx.Redis.Silence().RemoveAlertMute(before.TenantId, before.FaultCenterId, before.ID); err != nil {
+			return nil, fmt.Errorf("旧故障中心缓存清理失败，静默配置未修改，请核对后重试")
+		}
+	}
 	err = ass.ctx.DB.Silence().Update(silence)
 	if err != nil {
+		if before.FaultCenterId != silence.FaultCenterId {
+			if restoreErr := ass.ctx.Redis.Silence().PushAlertMute(before); restoreErr != nil {
+				return nil, fmt.Errorf("静默更新失败且旧缓存回补失败，请人工核对")
+			}
+		}
 		return nil, err
 	}
-
-	if before.FaultCenterId != silence.FaultCenterId {
-		ass.ctx.Redis.Silence().RemoveAlertMute(before.TenantId, before.FaultCenterId, before.ID)
+	if err := ass.ctx.Redis.Silence().PushAlertMute(silence); err != nil {
+		return silence, fmt.Errorf("静默已保存（%s），但缓存同步失败，尚未确认生效；请核对后重试更新", silence.ID)
 	}
-	ass.ctx.Redis.Silence().PushAlertMute(silence)
 	return silence, nil
 }
 
 func (ass alertSilenceService) Delete(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestSilenceQuery)
-	ass.ctx.Redis.Silence().RemoveAlertMute(r.TenantId, r.FaultCenterId, r.ID)
+	if r.TenantId == "" || r.ID == "" {
+		return nil, fmt.Errorf("租户和静默ID不能为空")
+	}
+	var stored models.AlertSilences
+	if err := ass.ctx.DB.DB().Where("tenant_id = ? AND id = ?", r.TenantId, r.ID).First(&stored).Error; err != nil {
+		return nil, err
+	}
+	if err := ass.ctx.Redis.Silence().RemoveAlertMute(stored.TenantId, stored.FaultCenterId, stored.ID); err != nil {
+		return nil, fmt.Errorf("静默缓存删除失败，数据库记录已保留；请核对静默实际状态后重试")
+	}
 	err := ass.ctx.DB.Silence().Delete(r.TenantId, r.ID)
 	if err != nil {
-		return nil, err
+		if restoreErr := ass.ctx.Redis.Silence().PushAlertMute(stored); restoreErr != nil {
+			return nil, fmt.Errorf("静默删除未完成，数据库记录仍保留且缓存回补失败，请人工核对")
+		}
+		return nil, fmt.Errorf("静默数据库删除失败，已尝试回补缓存，请核对后重试")
 	}
 
 	return nil, nil

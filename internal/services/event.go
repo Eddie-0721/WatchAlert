@@ -34,32 +34,38 @@ func newInterEventService(ctx *ctx.Context) InterEventService {
 }
 
 func (e eventService) ProcessAlertEvent(req interface{}) (interface{}, interface{}) {
-	r := req.(*types.RequestProcessAlertEvent)
-
-	var wg sync.WaitGroup
-	wg.Add(len(r.Fingerprints))
-	for _, fingerprint := range r.Fingerprints {
-		go func(fingerprint string) {
-			defer wg.Done()
-			cache, err := e.ctx.Redis.Alert().GetEventFromCache(r.TenantId, r.FaultCenterId, fingerprint)
-			if err != nil {
-				return
-			}
-
-			if cache.ConfirmState.IsOk {
-				return
-			}
-
-			cache.ConfirmState.IsOk = true
-			cache.ConfirmState.ConfirmUsername = r.Username
-			cache.ConfirmState.ConfirmActionTime = r.Time
-
-			e.ctx.Redis.Alert().PushAlertEvent(&cache)
-		}(fingerprint)
+	r, ok := req.(*types.RequestProcessAlertEvent)
+	if !ok || r == nil || r.TenantId == "" || r.FaultCenterId == "" || r.Username == "" || len(r.Fingerprints) == 0 || len(r.Fingerprints) > 500 {
+		return nil, fmt.Errorf("认领参数不完整或单次超过 500 条，请刷新后重试")
 	}
-
-	wg.Wait()
-	return nil, nil
+	confirmed, failed := 0, 0
+	seen := make(map[string]bool)
+	for _, fingerprint := range r.Fingerprints {
+		if seen[fingerprint] {
+			continue
+		}
+		seen[fingerprint] = true
+		event, err := e.ctx.Redis.Alert().GetEventFromCache(r.TenantId, r.FaultCenterId, fingerprint)
+		if fingerprint == "" || err != nil || event.TenantId != r.TenantId || event.FaultCenterId != r.FaultCenterId || event.Fingerprint != fingerprint || event.IsRecovered || event.Status == models.StateRecovered {
+			failed++
+			continue
+		}
+		if !event.ConfirmState.IsOk {
+			event.ConfirmState.IsOk = true
+			event.ConfirmState.ConfirmUsername = r.Username
+			event.ConfirmState.ConfirmActionTime = time.Now().Unix()
+			if err := e.ctx.Redis.Alert().PushAlertEvent(&event); err != nil {
+				failed++
+				continue
+			}
+		}
+		confirmed++
+	}
+	result := map[string]int{"confirmed": confirmed, "unconfirmed": failed}
+	if failed > 0 {
+		return result, fmt.Errorf("认领未全部确认：%d 条已认领，%d 条未确认；请刷新核对实际状态，不要重复提交整批", confirmed, failed)
+	}
+	return result, nil
 }
 
 func (e eventService) DeleteAlertEvent(req interface{}) (interface{}, interface{}) {
@@ -106,6 +112,9 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			return nil, err
 		}
 		for _, alert := range events {
+			if alert == nil || alert.TenantId != r.TenantId {
+				continue
+			}
 			allEvents = append(allEvents, *alert)
 		}
 	}
@@ -118,6 +127,12 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	}
 
 	for _, event := range allEvents {
+		if r.Fingerprint != "" && event.Fingerprint != r.Fingerprint {
+			continue
+		}
+		if r.RuleId != "" && event.RuleId != r.RuleId {
+			continue
+		}
 		if !eventWithinAgentScope(event, r) {
 			continue
 		}

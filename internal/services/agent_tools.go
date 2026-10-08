@@ -131,7 +131,21 @@ func (a *agentToolService) getAlert(arguments map[string]interface{}, claims age
 	if fingerprint == "" {
 		return nil, fmt.Errorf("fingerprint 不能为空")
 	}
-	return a.searchAlerts(map[string]interface{}{"fingerprint": fingerprint, "index": 1, "size": 1}, claims)
+	data, err := a.searchAlerts(map[string]interface{}{
+		"fingerprint": fingerprint, "faultCenterId": stringArgument(arguments, "faultCenterId"),
+		"includeRecovered": true, "index": 1, "size": 2,
+	}, claims)
+	if err != nil {
+		return nil, err
+	}
+	result := data.(types.ResponseAlertCurEventList)
+	if len(result.List) == 0 {
+		return nil, fmt.Errorf("告警不存在或不在当前授权范围内")
+	}
+	if len(result.List) != 1 || result.List[0].Fingerprint != fingerprint {
+		return nil, fmt.Errorf("告警标识不唯一或不匹配，请指定故障中心")
+	}
+	return result, nil
 }
 
 func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
@@ -159,7 +173,9 @@ func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, claim
 			related = append(related, item)
 		}
 	}
-	return map[string]interface{}{"sourceAlert": event, "relatedAlerts": related}, nil
+	return map[string]interface{}{"sourceAlert": event, "relatedAlerts": related,
+		"relationBasis": "same_rule_in_fault_center", "sameIncidentConfirmed": false,
+		"candidateLimit": 50, "truncated": all.Total > int64(len(all.List))}, nil
 }
 
 func (a *agentToolService) getIncident(arguments map[string]interface{}, tenantId string) (interface{}, error) {

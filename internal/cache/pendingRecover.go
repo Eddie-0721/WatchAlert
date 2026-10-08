@@ -16,7 +16,7 @@ type (
 
 	// PendingRecoverCacheInterface 定义了待恢复的告警事件缓存的操作接口
 	PendingRecoverCacheInterface interface {
-		Set(tenantId, ruleId, fingerprint string, time int64)
+		Set(tenantId, ruleId, fingerprint string, time int64) error
 		Get(tenantId, ruleId, fingerprint string) (int64, error)
 		Delete(tenantId, ruleId, fingerprint string)
 		List(tenantId, ruleId string) map[string]int64
@@ -37,11 +37,11 @@ func newPendingRecoverCacheInterface(r *redis.Client) PendingRecoverCacheInterfa
 	}
 }
 
-func (p *PendingRecoverCache) Set(tenantId, ruleId, fingerprint string, time int64) {
+func (p *PendingRecoverCache) Set(tenantId, ruleId, fingerprint string, time int64) error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	p.rc.HSet(string(BuildPendingRecoverCacheKey(tenantId, ruleId)), fingerprint, time)
+	return p.rc.HSet(string(BuildPendingRecoverCacheKey(tenantId, ruleId)), fingerprint, time).Err()
 }
 
 func (p *PendingRecoverCache) Get(tenantId, ruleId, fingerprint string) (int64, error) {

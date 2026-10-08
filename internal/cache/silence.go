@@ -5,7 +5,6 @@ import (
 	"github.com/go-redis/redis"
 	"sync"
 	"watchAlert/internal/models"
-	"watchAlert/pkg/client"
 	"watchAlert/pkg/tools"
 )
 
@@ -18,8 +17,8 @@ type (
 
 	// SilenceCacheInterface 定义了告警静默缓存的操作接口
 	SilenceCacheInterface interface {
-		PushAlertMute(mute models.AlertSilences)
-		RemoveAlertMute(tenantId, faultCenterId, id string)
+		PushAlertMute(mute models.AlertSilences) error
+		RemoveAlertMute(tenantId, faultCenterId, id string) error
 		GetAlertMutes(tenantId, faultCenterId string) ([]string, error)
 		WithIdGetMuteFromCache(tenantId, faultCenterId, id string) (*models.AlertSilences, error)
 	}
@@ -33,21 +32,21 @@ func newSilenceCacheInterface(r *redis.Client) SilenceCacheInterface {
 }
 
 // PushAlertMute 将静默规则推送到故障中心的缓存中
-func (sc *SilenceCache) PushAlertMute(mute models.AlertSilences) {
+func (sc *SilenceCache) PushAlertMute(mute models.AlertSilences) error {
 	sc.Lock()
 	defer sc.Unlock()
 
 	key := models.BuildAlertMuteCacheKey(mute.TenantId, mute.FaultCenterId)
-	sc.setRedisHash(key, mute.ID, tools.JsonMarshalToString(mute))
+	return sc.setRedisHash(key, mute.ID, tools.JsonMarshalToString(mute))
 }
 
 // RemoveAlertMute 从故障中心的缓存中移除静默规则
-func (sc *SilenceCache) RemoveAlertMute(tenantId, faultCenterId, id string) {
+func (sc *SilenceCache) RemoveAlertMute(tenantId, faultCenterId, id string) error {
 	sc.Lock()
 	defer sc.Unlock()
 
 	key := models.BuildAlertMuteCacheKey(tenantId, faultCenterId)
-	sc.deleteRedisHash(key, id)
+	return sc.deleteRedisHash(key, id)
 }
 
 func (sc *SilenceCache) GetAlertMutes(tenantId, faultCenterId string) ([]string, error) {
@@ -83,13 +82,13 @@ func (sc *SilenceCache) WithIdGetMuteFromCache(tenantId, faultCenterId, id strin
 }
 
 // setRedisHash 设置 Redis 哈希表中的值
-func (sc *SilenceCache) setRedisHash(key models.AlertMuteCacheKey, field string, value interface{}) {
-	client.Redis.HSet(string(key), field, value)
+func (sc *SilenceCache) setRedisHash(key models.AlertMuteCacheKey, field string, value interface{}) error {
+	return sc.rc.HSet(string(key), field, value).Err()
 }
 
 // deleteRedisHash 删除 Redis 哈希表中的值
-func (sc *SilenceCache) deleteRedisHash(key models.AlertMuteCacheKey, field string) {
-	client.Redis.HDel(string(key), field)
+func (sc *SilenceCache) deleteRedisHash(key models.AlertMuteCacheKey, field string) error {
+	return sc.rc.HDel(string(key), field).Err()
 }
 
 // getRedisHash 获取 Redis 哈希表中的值
