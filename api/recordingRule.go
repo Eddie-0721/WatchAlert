@@ -52,7 +52,9 @@ func (recordingRuleController recordingRuleController) API(gin *gin.RouterGroup)
 
 func (recordingRuleController recordingRuleController) Create(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -70,7 +72,9 @@ func (recordingRuleController recordingRuleController) Create(ctx *gin.Context) 
 
 func (recordingRuleController recordingRuleController) Update(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -88,7 +92,9 @@ func (recordingRuleController recordingRuleController) Update(ctx *gin.Context) 
 
 func (recordingRuleController recordingRuleController) List(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -100,7 +106,9 @@ func (recordingRuleController recordingRuleController) List(ctx *gin.Context) {
 
 func (recordingRuleController recordingRuleController) Delete(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -112,7 +120,9 @@ func (recordingRuleController recordingRuleController) Delete(ctx *gin.Context) 
 
 func (recordingRuleController recordingRuleController) Get(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -124,7 +134,9 @@ func (recordingRuleController recordingRuleController) Get(ctx *gin.Context) {
 
 func (recordingRuleController recordingRuleController) ChangeStatus(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleChangeStatus)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

@@ -38,15 +38,8 @@ func (a settingRepo) Create(r models.Settings) error {
 }
 
 func (a settingRepo) Update(r models.Settings) error {
-	err := a.g.Updates(
-		Updates{
-			Table: models.Settings{},
-			Where: map[string]interface{}{
-				"is_init = ?": 1,
-			},
-			Updates: r,
-		},
-	)
+	err := a.db.Model(&models.Settings{}).Where("is_init = ?", 1).
+		Select("AuthType", "CommunicationConfig", "AiConfig", "AgentConfig", "LdapConfig", "OidcConfig").Updates(r).Error
 	if err != nil {
 		return err
 	}
@@ -58,9 +51,8 @@ func (a settingRepo) Get() (models.Settings, error) {
 	var data models.Settings
 	db := a.db.Model(models.Settings{})
 	db.Where("is_init = ?", 1)
-	db.First(&data)
-
-	return data, nil
+	err := db.First(&data).Error
+	return data, err
 }
 
 func (a settingRepo) Check() bool {

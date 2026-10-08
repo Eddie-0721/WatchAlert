@@ -30,7 +30,9 @@ func (kubernetesTypesController kubernetesTypesController) getResourceList(ctx *
 
 func (kubernetesTypesController kubernetesTypesController) getReasonList(ctx *gin.Context) {
 	r := new(types.RequestKubernetesEventTypes)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return types.EventReasonLMapping[r.Resource], nil

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"errors"
+	"strings"
 	"time"
 	"watchAlert/config"
 
@@ -60,12 +61,21 @@ func GenerateToken(userId, userName, password string) (string, error) {
 	return token.SignedString(StSignKey)
 }
 
+// BearerToken validates the header before any caller extracts the token.
+func BearerToken(header string) (string, bool) {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], TokenType) {
+		return "", false
+	}
+	return parts[1], true
+}
+
 func GetUser(tokenStr string) string {
-	if tokenStr == "" {
+	tokenStr, ok := BearerToken(tokenStr)
+	if !ok {
 		return ""
 	}
 
-	tokenStr = tokenStr[len(TokenType)+1:]
 	token, err := ParseToken(tokenStr)
 	if err != nil {
 		return ""
@@ -74,11 +84,11 @@ func GetUser(tokenStr string) string {
 }
 
 func GetUserID(tokenStr string) string {
-	if tokenStr == "" {
+	tokenStr, ok := BearerToken(tokenStr)
+	if !ok {
 		return ""
 	}
 
-	tokenStr = tokenStr[len(TokenType)+1:]
 	token, err := ParseToken(tokenStr)
 	if err != nil {
 		return ""

@@ -42,7 +42,9 @@ func (recordingRuleGroupController recordingRuleGroupController) API(gin *gin.Ro
 
 func (recordingRuleGroupController recordingRuleGroupController) Create(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleGroupCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -54,7 +56,9 @@ func (recordingRuleGroupController recordingRuleGroupController) Create(ctx *gin
 
 func (recordingRuleGroupController recordingRuleGroupController) Update(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleGroupUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -66,7 +70,9 @@ func (recordingRuleGroupController recordingRuleGroupController) Update(ctx *gin
 
 func (recordingRuleGroupController recordingRuleGroupController) List(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleGroupQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -78,7 +84,9 @@ func (recordingRuleGroupController recordingRuleGroupController) List(ctx *gin.C
 
 func (recordingRuleGroupController recordingRuleGroupController) Delete(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleGroupQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -90,7 +98,9 @@ func (recordingRuleGroupController recordingRuleGroupController) Delete(ctx *gin
 
 func (recordingRuleGroupController recordingRuleGroupController) Get(ctx *gin.Context) {
 	r := new(types.RequestRecordingRuleGroupQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

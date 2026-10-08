@@ -16,6 +16,7 @@ func (settingsController settingsController) API(gin *gin.RouterGroup) {
 	a := gin.Group("setting")
 	a.Use(
 		middleware.Auth(),
+		middleware.PlatformAdmin(),
 		middleware.Permission(),
 		middleware.AuditingLog(),
 	)
@@ -26,6 +27,7 @@ func (settingsController settingsController) API(gin *gin.RouterGroup) {
 	b := gin.Group("setting")
 	b.Use(
 		middleware.Auth(),
+		middleware.PlatformAdmin(),
 		middleware.Permission(),
 	)
 	{
@@ -36,7 +38,9 @@ func (settingsController settingsController) API(gin *gin.RouterGroup) {
 
 func (settingsController settingsController) Save(ctx *gin.Context) {
 	r := new(models.Settings)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.SettingService.Save(r)

@@ -15,6 +15,7 @@ func (clientController clientController) API(gin *gin.RouterGroup) {
 	a := gin.Group("c")
 	a.Use(
 		middleware.Auth(),
+		middleware.Permission(),
 		middleware.ParseTenant(),
 	)
 	{
@@ -24,9 +25,12 @@ func (clientController clientController) API(gin *gin.RouterGroup) {
 
 func (clientController clientController) GetJaegerService(ctx *gin.Context) {
 	r := new(types.RequestDatasourceQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
+		r.TenantId = ctx.GetString("TenantID")
 		return services.ClientService.GetJaegerService(r)
 	})
 }

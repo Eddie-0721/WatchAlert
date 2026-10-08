@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"strings"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/response"
@@ -11,12 +12,17 @@ import (
 
 const TenantIDHeaderKey = "TenantID"
 
+func validTenantID(id string) bool {
+	return id != "" && id == strings.TrimSpace(id) &&
+		!strings.EqualFold(id, "null") && !strings.EqualFold(id, "undefined")
+}
+
 func ParseTenant() gin.HandlerFunc {
 	// 从HTTP头部获取TenantID并存储到上下文中，可以提高代码的可维护性、可重用性、安全性和性能，同时也使得错误处理和业务逻辑的实现更加高效和灵活。
 	return func(context *gin.Context) {
 		tid := context.Request.Header.Get(TenantIDHeaderKey)
-		if tid == "" {
-			response.Fail(context, "租户ID不能为空", "failed")
+		if !validTenantID(tid) {
+			response.Fail(context, "租户ID无效", "failed")
 			context.Abort()
 			return
 		}

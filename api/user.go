@@ -47,7 +47,9 @@ func (userController userController) API(gin *gin.RouterGroup) {
 
 func (userController userController) List(ctx *gin.Context) {
 	r := new(types.RequestUserQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserService.List(r)
@@ -72,7 +74,9 @@ func (userController userController) GetUserInfo(ctx *gin.Context) {
 
 func (userController userController) Login(ctx *gin.Context) {
 	r := new(types.RequestUserLogin)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserService.Login(r)
@@ -81,7 +85,9 @@ func (userController userController) Login(ctx *gin.Context) {
 
 func (userController userController) Register(ctx *gin.Context) {
 	r := new(types.RequestUserCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		createUser := jwtUtils.GetUser(ctx.Request.Header.Get("Authorization"))
@@ -93,7 +99,9 @@ func (userController userController) Register(ctx *gin.Context) {
 
 func (userController userController) Update(ctx *gin.Context) {
 	r := new(types.RequestUserUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserService.Update(r)
@@ -102,7 +110,9 @@ func (userController userController) Update(ctx *gin.Context) {
 
 func (userController userController) Delete(ctx *gin.Context) {
 	r := new(types.RequestUserQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserService.Delete(r)
@@ -111,7 +121,9 @@ func (userController userController) Delete(ctx *gin.Context) {
 
 func (userController userController) CheckUser(ctx *gin.Context) {
 	r := new(types.RequestUserQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserService.Check(r)
@@ -120,7 +132,9 @@ func (userController userController) CheckUser(ctx *gin.Context) {
 
 func (userController userController) ChangePass(ctx *gin.Context) {
 	r := new(types.RequestUserChangePassword)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		userID := jwtUtils.GetUserID(ctx.Request.Header.Get("Authorization"))

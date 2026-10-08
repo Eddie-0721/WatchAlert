@@ -30,7 +30,9 @@ func (awsCloudWatchRDSController awsCloudWatchRDSController) API(gin *gin.Router
 
 func (awsCloudWatchRDSController awsCloudWatchRDSController) GetRdsInstanceIdentifier(ctx *gin.Context) {
 	req := new(cloudwatch.RdsInstanceReq)
-	BindQuery(ctx, req)
+	if !BindQuery(ctx, req) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.AWSCloudWatchRdsService.GetDBInstanceIdentifier(req)
 	})
@@ -38,7 +40,9 @@ func (awsCloudWatchRDSController awsCloudWatchRDSController) GetRdsInstanceIdent
 
 func (awsCloudWatchRDSController awsCloudWatchRDSController) GetRdsClusterIdentifier(ctx *gin.Context) {
 	req := new(cloudwatch.RdsClusterReq)
-	BindQuery(ctx, req)
+	if !BindQuery(ctx, req) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.AWSCloudWatchRdsService.GetDBClusterIdentifier(req)
 	})

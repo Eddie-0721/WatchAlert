@@ -55,7 +55,9 @@ func (ruleController ruleController) API(gin *gin.RouterGroup) {
 
 func (ruleController ruleController) Create(ctx *gin.Context) {
 	r := new(types.RequestRuleCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -73,7 +75,9 @@ func (ruleController ruleController) Create(ctx *gin.Context) {
 
 func (ruleController ruleController) Update(ctx *gin.Context) {
 	r := new(types.RequestRuleUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -91,7 +95,9 @@ func (ruleController ruleController) Update(ctx *gin.Context) {
 
 func (ruleController ruleController) List(ctx *gin.Context) {
 	r := new(types.RequestRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -103,7 +109,9 @@ func (ruleController ruleController) List(ctx *gin.Context) {
 
 func (ruleController ruleController) Delete(ctx *gin.Context) {
 	r := new(types.RequestRuleQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -115,7 +123,9 @@ func (ruleController ruleController) Delete(ctx *gin.Context) {
 
 func (ruleController ruleController) Search(ctx *gin.Context) {
 	r := new(types.RequestRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -127,7 +137,9 @@ func (ruleController ruleController) Search(ctx *gin.Context) {
 
 func (ruleController ruleController) ChangeStatus(ctx *gin.Context) {
 	r := new(types.RequestRuleChangeStatus)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -139,7 +151,9 @@ func (ruleController ruleController) ChangeStatus(ctx *gin.Context) {
 
 func (ruleController ruleController) Import(ctx *gin.Context) {
 	r := new(types.RequestRuleImport)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -151,7 +165,9 @@ func (ruleController ruleController) Import(ctx *gin.Context) {
 
 func (ruleController ruleController) Change(ctx *gin.Context) {
 	r := new(types.RequestRuleChange)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")

@@ -41,7 +41,9 @@ func (ruleGroupController ruleGroupController) API(gin *gin.RouterGroup) {
 
 func (ruleGroupController ruleGroupController) Create(ctx *gin.Context) {
 	r := new(types.RequestRuleGroupCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -53,7 +55,9 @@ func (ruleGroupController ruleGroupController) Create(ctx *gin.Context) {
 
 func (ruleGroupController ruleGroupController) Update(ctx *gin.Context) {
 	r := new(types.RequestRuleGroupUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -65,7 +69,9 @@ func (ruleGroupController ruleGroupController) Update(ctx *gin.Context) {
 
 func (ruleGroupController ruleGroupController) List(ctx *gin.Context) {
 	r := new(types.RequestRuleGroupQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -77,7 +83,9 @@ func (ruleGroupController ruleGroupController) List(ctx *gin.Context) {
 
 func (ruleGroupController ruleGroupController) Delete(ctx *gin.Context) {
 	r := new(types.RequestRuleGroupQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

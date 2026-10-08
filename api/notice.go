@@ -56,7 +56,9 @@ func (noticeController noticeController) API(gin *gin.RouterGroup) {
 
 func (noticeController noticeController) List(ctx *gin.Context) {
 	r := new(types.RequestNoticeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -68,7 +70,9 @@ func (noticeController noticeController) List(ctx *gin.Context) {
 
 func (noticeController noticeController) Create(ctx *gin.Context) {
 	r := new(types.RequestNoticeCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -86,7 +90,9 @@ func (noticeController noticeController) Create(ctx *gin.Context) {
 
 func (noticeController noticeController) Update(ctx *gin.Context) {
 	r := new(types.RequestNoticeUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -104,7 +110,9 @@ func (noticeController noticeController) Update(ctx *gin.Context) {
 
 func (noticeController noticeController) Delete(ctx *gin.Context) {
 	r := new(types.RequestNoticeQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -116,7 +124,9 @@ func (noticeController noticeController) Delete(ctx *gin.Context) {
 
 func (noticeController noticeController) Get(ctx *gin.Context) {
 	r := new(types.RequestNoticeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -129,7 +139,9 @@ func (noticeController noticeController) Get(ctx *gin.Context) {
 
 func (noticeController noticeController) ListRecord(ctx *gin.Context) {
 	r := new(types.RequestNoticeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -141,7 +153,9 @@ func (noticeController noticeController) ListRecord(ctx *gin.Context) {
 
 func (noticeController noticeController) GetRecordMetric(ctx *gin.Context) {
 	r := new(types.RequestNoticeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -153,7 +167,9 @@ func (noticeController noticeController) GetRecordMetric(ctx *gin.Context) {
 
 func (noticeController noticeController) Test(ctx *gin.Context) {
 	r := new(types.RequestNoticeTest)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.NoticeService.Test(r)

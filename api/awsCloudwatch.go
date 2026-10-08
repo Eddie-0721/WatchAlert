@@ -38,7 +38,9 @@ func (awsCloudWatchController awsCloudWatchController) GetMetricTypes(ctx *gin.C
 
 func (awsCloudWatchController awsCloudWatchController) GetMetricNames(ctx *gin.Context) {
 	q := new(cloudwatch.MetricNamesQuery)
-	BindQuery(ctx, q)
+	if !BindQuery(ctx, q) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.AWSCloudWatchService.GetMetricNames(q)
 	})
@@ -52,7 +54,9 @@ func (awsCloudWatchController awsCloudWatchController) GetStatistics(ctx *gin.Co
 
 func (awsCloudWatchController awsCloudWatchController) GetDimensions(ctx *gin.Context) {
 	q := new(cloudwatch.RdsDimensionReq)
-	BindQuery(ctx, q)
+	if !BindQuery(ctx, q) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.AWSCloudWatchService.GetDimensions(q)
 	})

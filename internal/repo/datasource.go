@@ -79,6 +79,9 @@ func (ds DatasourceRepo) Get(datasourceId string) (models.AlertDataSource, error
 // be used for a user-scoped data source request.
 func (ds DatasourceRepo) GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error) {
 	var data models.AlertDataSource
+	if strings.TrimSpace(tenantId) == "" || strings.TrimSpace(datasourceId) == "" || tenantId == "null" || tenantId == "undefined" {
+		return data, fmt.Errorf("租户和数据源ID不能为空")
+	}
 	err := ds.db.Model(&models.AlertDataSource{}).
 		Where("tenant_id = ? AND id = ?", tenantId, datasourceId).
 		First(&data).Error
@@ -94,15 +97,11 @@ func (ds DatasourceRepo) Create(r models.AlertDataSource) error {
 }
 
 func (ds DatasourceRepo) Update(r models.AlertDataSource) error {
-	data := Updates{
-		Table: models.AlertDataSource{},
-		Where: map[string]interface{}{
-			"id = ?":        r.ID,
-			"tenant_id = ?": r.TenantId,
-		},
-		Updates: r,
-	}
-	err := ds.g.Updates(data)
+	// Explicit columns persist zero values, including intentionally cleared
+	// credentials and KubeConfig. The primary key and tenant cannot be changed.
+	err := ds.db.Model(&models.AlertDataSource{}).
+		Where("tenant_id = ? AND id = ?", r.TenantId, r.ID).
+		Select("Name", "Labels", "Type", "HTTP", "Write", "Auth", "DsAliCloudConfig", "AWSCloudWatch", "ClickHouseConfig", "Description", "KubeConfig", "UpdateBy", "UpdateAt", "Enabled").Updates(r).Error
 	if err != nil {
 		return err
 	}

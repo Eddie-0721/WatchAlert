@@ -50,7 +50,9 @@ func (faultCenterController faultCenterController) API(gin *gin.RouterGroup) {
 
 func (faultCenterController faultCenterController) Create(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -62,7 +64,9 @@ func (faultCenterController faultCenterController) Create(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) Update(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -74,7 +78,9 @@ func (faultCenterController faultCenterController) Update(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) Delete(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -86,7 +92,9 @@ func (faultCenterController faultCenterController) Delete(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) List(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -98,7 +106,9 @@ func (faultCenterController faultCenterController) List(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) Search(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -110,7 +120,9 @@ func (faultCenterController faultCenterController) Search(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) Reset(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterReset)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -122,7 +134,9 @@ func (faultCenterController faultCenterController) Reset(ctx *gin.Context) {
 
 func (faultCenterController faultCenterController) Slo(ctx *gin.Context) {
 	r := new(types.RequestFaultCenterQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

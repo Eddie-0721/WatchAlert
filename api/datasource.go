@@ -69,7 +69,9 @@ func (datasourceController datasourceController) API(gin *gin.RouterGroup) {
 
 func (datasourceController datasourceController) Create(ctx *gin.Context) {
 	r := new(types.RequestDatasourceCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		userName := jwtUtils.GetUser(ctx.Request.Header.Get("Authorization"))
@@ -84,7 +86,9 @@ func (datasourceController datasourceController) Create(ctx *gin.Context) {
 
 func (datasourceController datasourceController) List(ctx *gin.Context) {
 	r := new(types.RequestDatasourceQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -96,7 +100,9 @@ func (datasourceController datasourceController) List(ctx *gin.Context) {
 
 func (datasourceController datasourceController) Get(ctx *gin.Context) {
 	r := new(types.RequestDatasourceQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -108,7 +114,9 @@ func (datasourceController datasourceController) Get(ctx *gin.Context) {
 
 func (datasourceController datasourceController) Update(ctx *gin.Context) {
 	r := new(types.RequestDatasourceUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		userName := jwtUtils.GetUser(ctx.Request.Header.Get("Authorization"))
@@ -123,7 +131,9 @@ func (datasourceController datasourceController) Update(ctx *gin.Context) {
 
 func (datasourceController datasourceController) Delete(ctx *gin.Context) {
 	r := new(types.RequestDatasourceQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -135,7 +145,9 @@ func (datasourceController datasourceController) Delete(ctx *gin.Context) {
 
 func (datasourceController datasourceController) PromQuery(ctx *gin.Context) {
 	r := new(types.RequestQueryMetricsValue)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		var ress []provider.QueryResponse
@@ -182,7 +194,9 @@ func (datasourceController datasourceController) PromQuery(ctx *gin.Context) {
 
 func (datasourceController datasourceController) PromQueryRange(ctx *gin.Context) {
 	r := new(types.RequestQueryMetricsValue)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		err := r.Validate()
@@ -232,11 +246,13 @@ func (datasourceController datasourceController) PromQueryRange(ctx *gin.Context
 
 func (datasourceController datasourceController) Ping(ctx *gin.Context) {
 	r := new(types.RequestDatasourceCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
-		ok, err := provider.CheckDatasourceHealth(models.AlertDataSource{
-			TenantId:         r.TenantId,
+		source := models.AlertDataSource{
+			TenantId:         ctx.GetString("TenantID"),
 			Name:             r.Name,
 			Labels:           r.Labels,
 			Type:             r.Type,
@@ -248,9 +264,19 @@ func (datasourceController datasourceController) Ping(ctx *gin.Context) {
 			Description:      r.Description,
 			KubeConfig:       r.KubeConfig,
 			Enabled:          r.Enabled,
-		})
-		if !ok {
-			return "", fmt.Errorf("数据源不可达, err: %s", err.Error())
+		}
+		if r.ID != "" {
+			previous, err := ctx2.DO().DB.Datasource().GetForTenant(source.TenantId, r.ID)
+			if err != nil {
+				return nil, err
+			}
+			if err := source.MergeCredentials(previous, r.ClearCredentials); err != nil {
+				return nil, err
+			}
+		}
+		ok, err := provider.CheckDatasourceHealth(source)
+		if !ok || err != nil {
+			return "", fmt.Errorf("数据源连接测试失败，请检查地址、凭据与网络")
 		}
 		return "", nil
 	})
@@ -259,15 +285,22 @@ func (datasourceController datasourceController) Ping(ctx *gin.Context) {
 // SearchViewLogsContent Logs 数据预览
 func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.Context) {
 	r := new(types.RequestSearchLogsContent)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
-		data, err := services.DatasourceService.Get(&types.RequestDatasourceQuery{ID: r.DatasourceId})
+		datasource, err := ctx2.DO().DB.Datasource().GetForTenant(ctx.GetString("TenantID"), r.DatasourceId)
 		if err != nil {
 			return nil, err
 		}
 
-		datasource := data.(models.AlertDataSource)
+		if !datasource.GetEnabled() {
+			return nil, fmt.Errorf("数据源已禁用")
+		}
+		if r.Type != datasource.Type {
+			return nil, fmt.Errorf("数据源类型不匹配")
+		}
 
 		var (
 			client  provider.LogsFactoryProvider
@@ -320,6 +353,9 @@ func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.
 			}
 		}
 
+		if client == nil {
+			return nil, fmt.Errorf("不支持该数据源的日志预览")
+		}
 		query, _, err := client.Query(options)
 		if err != nil {
 			return nil, err

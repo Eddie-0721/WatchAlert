@@ -36,7 +36,7 @@ func (p ProbingRepo) Create(d models.ProbeRule) error {
 
 	err := p.g.Create(models.ProbeRule{}, d)
 	if err != nil {
-		logc.Errorf(context.Background(), err.Error())
+		logc.Error(context.Background(), err)
 		return err
 	}
 	return nil
@@ -53,7 +53,7 @@ func (p ProbingRepo) Update(d models.ProbeRule) error {
 	}
 	err := p.g.Updates(u)
 	if err != nil {
-		logc.Errorf(context.Background(), err.Error())
+		logc.Error(context.Background(), err)
 		return err
 	}
 	return nil
@@ -69,7 +69,7 @@ func (p ProbingRepo) Delete(tenantId, ruleId string) error {
 	}
 	err := p.g.Delete(del)
 	if err != nil {
-		logc.Errorf(context.Background(), err.Error())
+		logc.Error(context.Background(), err)
 		return err
 	}
 	return nil

@@ -1,13 +1,10 @@
 package middleware
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/zeromicro/go-zero/core/logc"
 	"github.com/zeromicro/go-zero/core/logx"
-	"io/ioutil"
 	"time"
 )
 
@@ -42,22 +39,11 @@ func GinZapLogger() gin.HandlerFunc {
 	}
 }
 
-// LoggingMiddleware 打印请求的body和query params
+// LoggingMiddleware deliberately excludes request bodies and query values.
+// They can contain credentials even on failed requests.
 func LoggingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 读取body
-		bodyBytes, err := ioutil.ReadAll(c.Request.Body)
-		if err != nil {
-			logc.Errorf(context.Background(), err.Error())
-			c.Abort()
-			return
-		}
-		// 将body复制回原位
-		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
-		// 打印body和query params
-		fmt.Println("Body:", string(bodyBytes))
-		fmt.Println("Query Params:", c.Request.URL.Query())
-		// 处理请求
+		logc.Infof(c.Request.Context(), "HTTP request: %s %s", c.Request.Method, c.FullPath())
 		c.Next()
 	}
 }

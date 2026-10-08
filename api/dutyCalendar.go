@@ -50,7 +50,9 @@ func (dutyCalendarController dutyCalendarController) API(gin *gin.RouterGroup) {
 
 func (dutyCalendarController dutyCalendarController) Create(ctx *gin.Context) {
 	r := new(types.RequestDutyCalendarCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -62,7 +64,9 @@ func (dutyCalendarController dutyCalendarController) Create(ctx *gin.Context) {
 
 func (dutyCalendarController dutyCalendarController) Update(ctx *gin.Context) {
 	r := new(types.RequestDutyCalendarUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -74,7 +78,9 @@ func (dutyCalendarController dutyCalendarController) Update(ctx *gin.Context) {
 
 func (dutyCalendarController dutyCalendarController) Search(ctx *gin.Context) {
 	r := new(types.RequestDutyCalendarQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -86,7 +92,9 @@ func (dutyCalendarController dutyCalendarController) Search(ctx *gin.Context) {
 
 func (dutyCalendarController dutyCalendarController) GetCalendarUsers(ctx *gin.Context) {
 	r := new(types.RequestDutyCalendarQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

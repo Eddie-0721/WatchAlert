@@ -1,6 +1,7 @@
 package models
 
 type AlertDataSource struct {
+	CredentialsSet   map[string]bool        `json:"credentialsSet,omitempty" gorm:"-"`
 	TenantId         string                 `json:"tenantId"`
 	ID               string                 `json:"id"`
 	Name             string                 `json:"name"`

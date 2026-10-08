@@ -12,6 +12,8 @@ const (
 )
 
 type RequestDatasourceCreate struct {
+	ID               string                    `json:"id"` // Only used to load retained credentials for a connection test.
+	ClearCredentials []string                  `json:"clearCredentials"`
 	TenantId         string                    `json:"tenantId"`
 	Name             string                    `json:"name"`
 	Labels           map[string]interface{}    `json:"labels"` // 额外标签，会添加到事件Metric中，可用于区分数据来源；
@@ -29,6 +31,7 @@ type RequestDatasourceCreate struct {
 }
 
 type RequestDatasourceUpdate struct {
+	ClearCredentials []string                  `json:"clearCredentials"`
 	TenantId         string                    `json:"tenantId"`
 	ID               string                    `json:"id"`
 	Name             string                    `json:"name"`

@@ -10,7 +10,7 @@ func NewCronjob(spec string, cmd func()) {
 	c := cron.New()
 	_, err := c.AddFunc(spec, cmd)
 	if err != nil {
-		logc.Errorf(context.Background(), err.Error())
+		logc.Error(context.Background(), err)
 		return
 	}
 	c.Start()

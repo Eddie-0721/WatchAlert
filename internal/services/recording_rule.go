@@ -32,6 +32,9 @@ func newInterRecordingRuleService(ctx *ctx.Context) InterRecordingRuleService {
 
 func (rs recordingRuleService) Create(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestRecordingRuleCreate)
+	if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, r.DatasourceType, []string{r.DatasourceId}); err != nil {
+		return nil, err
+	}
 
 	// 如果指定了ruleGroupId，验证规则组是否存在
 	if r.RuleGroupId > 0 {
@@ -92,12 +95,17 @@ func (rs recordingRuleService) Create(req interface{}) (interface{}, interface{}
 
 func (rs recordingRuleService) Update(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestRecordingRuleUpdate)
+	if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, r.DatasourceType, []string{r.DatasourceId}); err != nil {
+		return nil, err
+	}
 
 	// Get the old rule
 	oldRule := models.RecordingRule{}
-	rs.ctx.DB.DB().Model(&models.RecordingRule{}).
+	if err := rs.ctx.DB.DB().Model(&models.RecordingRule{}).
 		Where("tenant_id = ? AND rule_id = ?", r.TenantId, r.RuleId).
-		First(&oldRule)
+		First(&oldRule).Error; err != nil {
+		return nil, err
+	}
 
 	// 判断当前状态变化
 	var action string

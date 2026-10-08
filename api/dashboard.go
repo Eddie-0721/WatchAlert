@@ -49,7 +49,9 @@ func (dashboardController dashboardController) API(gin *gin.RouterGroup) {
 
 func (dashboardController dashboardController) ListFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -61,7 +63,9 @@ func (dashboardController dashboardController) ListFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) SearchFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -73,7 +77,9 @@ func (dashboardController dashboardController) SearchFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) GetFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -85,7 +91,9 @@ func (dashboardController dashboardController) GetFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) CreateFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -97,7 +105,9 @@ func (dashboardController dashboardController) CreateFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) UpdateFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -109,7 +119,9 @@ func (dashboardController dashboardController) UpdateFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) DeleteFolder(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -121,7 +133,9 @@ func (dashboardController dashboardController) DeleteFolder(ctx *gin.Context) {
 
 func (dashboardController dashboardController) ListGrafanaDashboards(ctx *gin.Context) {
 	r := new(types.RequestDashboardFoldersQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -133,7 +147,9 @@ func (dashboardController dashboardController) ListGrafanaDashboards(ctx *gin.Co
 
 func (dashboardController dashboardController) GetDashboardFullUrl(ctx *gin.Context) {
 	r := new(types.RequestGetGrafanaDashboard)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.DashboardService.GetDashboardFullUrl(r)

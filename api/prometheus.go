@@ -89,7 +89,9 @@ func (prometheusController prometheusController) ListTargetsForSD(c *gin.Context
 
 func (prometheusController prometheusController) CreateTargetGroup(c *gin.Context) {
 	r := new(types.RequestPrometheusCreateTargetGroup)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -101,7 +103,9 @@ func (prometheusController prometheusController) CreateTargetGroup(c *gin.Contex
 
 func (prometheusController prometheusController) UpdateTargetGroup(c *gin.Context) {
 	r := new(types.RequestPrometheusUpdateTargetGroup)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -113,7 +117,9 @@ func (prometheusController prometheusController) UpdateTargetGroup(c *gin.Contex
 
 func (prometheusController prometheusController) DeleteTargetGroup(c *gin.Context) {
 	r := new(types.RequestPrometheusDeleteTargetGroup)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -125,7 +131,9 @@ func (prometheusController prometheusController) DeleteTargetGroup(c *gin.Contex
 
 func (prometheusController prometheusController) ListTargetGroup(c *gin.Context) {
 	r := new(types.RequestPrometheusListTargetGroup)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -137,7 +145,9 @@ func (prometheusController prometheusController) ListTargetGroup(c *gin.Context)
 
 func (prometheusController prometheusController) GetTargetGroup(c *gin.Context) {
 	r := new(types.RequestPrometheusGetTargetGroup)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -153,7 +163,9 @@ func (prometheusController prometheusController) GetTargetGroup(c *gin.Context) 
 
 func (prometheusController prometheusController) CreateTarget(c *gin.Context) {
 	r := new(types.RequestPrometheusCreateTarget)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -165,7 +177,9 @@ func (prometheusController prometheusController) CreateTarget(c *gin.Context) {
 
 func (prometheusController prometheusController) UpdateTarget(c *gin.Context) {
 	r := new(types.RequestPrometheusUpdateTarget)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -177,7 +191,9 @@ func (prometheusController prometheusController) UpdateTarget(c *gin.Context) {
 
 func (prometheusController prometheusController) DeleteTarget(c *gin.Context) {
 	r := new(types.RequestPrometheusDeleteTarget)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -189,7 +205,9 @@ func (prometheusController prometheusController) DeleteTarget(c *gin.Context) {
 
 func (prometheusController prometheusController) ListTarget(c *gin.Context) {
 	r := new(types.RequestPrometheusListTarget)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -201,7 +219,9 @@ func (prometheusController prometheusController) ListTarget(c *gin.Context) {
 
 func (prometheusController prometheusController) GetTarget(c *gin.Context) {
 	r := new(types.RequestPrometheusGetTarget)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -217,7 +237,9 @@ func (prometheusController prometheusController) GetTarget(c *gin.Context) {
 
 func (prometheusController prometheusController) ListTargetVersion(c *gin.Context) {
 	r := new(types.RequestPrometheusListTargetVersion)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -229,7 +251,9 @@ func (prometheusController prometheusController) ListTargetVersion(c *gin.Contex
 
 func (prometheusController prometheusController) GetTargetVersion(c *gin.Context) {
 	r := new(types.RequestPrometheusGetTargetVersion)
-	BindQuery(c, r)
+	if !BindQuery(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -241,7 +265,9 @@ func (prometheusController prometheusController) GetTargetVersion(c *gin.Context
 
 func (prometheusController prometheusController) RollbackTargetVersion(c *gin.Context) {
 	r := new(types.RequestPrometheusRollbackTargetVersion)
-	BindJson(c, r)
+	if !BindJson(c, r) {
+		return
+	}
 
 	tid, _ := c.Get("TenantID")
 	r.TenantId = tid.(string)

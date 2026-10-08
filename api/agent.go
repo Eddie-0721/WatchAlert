@@ -37,7 +37,9 @@ func (agentController agentController) API(gin *gin.RouterGroup) {
 
 func (agentController agentController) ConfirmAction(ctx *gin.Context) {
 	r := new(types.RequestAgentActionConfirm)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		tenantId, userId, err := agentRequestScope(ctx)
 		if err != nil {
@@ -69,7 +71,9 @@ func (agentController agentController) ListSessions(ctx *gin.Context) {
 
 func (agentController agentController) GetSession(ctx *gin.Context) {
 	r := new(types.RequestAgentSessionQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		tenantId, userId, err := agentRequestScope(ctx)
 		if err != nil {
@@ -81,7 +85,9 @@ func (agentController agentController) GetSession(ctx *gin.Context) {
 
 func (agentController agentController) CreateSession(ctx *gin.Context) {
 	r := new(types.RequestAgentSessionCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		tenantId, userId, err := agentRequestScope(ctx)
 		if err != nil {
@@ -93,7 +99,9 @@ func (agentController agentController) CreateSession(ctx *gin.Context) {
 
 func (agentController agentController) SendMessage(ctx *gin.Context) {
 	r := new(types.RequestAgentSessionMessage)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 	Service(ctx, func() (interface{}, interface{}) {
 		tenantId, userId, err := agentRequestScope(ctx)
 		if err != nil {

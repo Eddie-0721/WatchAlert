@@ -48,7 +48,9 @@ func (alertEventController alertEventController) API(gin *gin.RouterGroup) {
 
 func (alertEventController alertEventController) ProcessAlertEvent(ctx *gin.Context) {
 	r := new(types.RequestProcessAlertEvent)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -69,7 +71,9 @@ func (alertEventController alertEventController) ProcessAlertEvent(ctx *gin.Cont
 
 func (alertEventController alertEventController) DeleteAlertEvent(ctx *gin.Context) {
 	r := new(types.RequestProcessAlertEvent)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -82,7 +86,9 @@ func (alertEventController alertEventController) DeleteAlertEvent(ctx *gin.Conte
 
 func (alertEventController alertEventController) ListCurrentEvent(ctx *gin.Context) {
 	r := new(types.RequestAlertCurEventQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -94,7 +100,9 @@ func (alertEventController alertEventController) ListCurrentEvent(ctx *gin.Conte
 
 func (alertEventController alertEventController) ListHistoryEvent(ctx *gin.Context) {
 	r := new(types.RequestAlertHisEventQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -106,7 +114,9 @@ func (alertEventController alertEventController) ListHistoryEvent(ctx *gin.Conte
 
 func (alertEventController alertEventController) ListComment(ctx *gin.Context) {
 	r := new(types.RequestListEventComments)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -118,7 +128,9 @@ func (alertEventController alertEventController) ListComment(ctx *gin.Context) {
 
 func (alertEventController alertEventController) AddComment(ctx *gin.Context) {
 	r := new(types.RequestAddEventComment)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -134,7 +146,9 @@ func (alertEventController alertEventController) AddComment(ctx *gin.Context) {
 
 func (alertEventController alertEventController) DeleteComment(ctx *gin.Context) {
 	r := new(types.RequestDeleteEventComment)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

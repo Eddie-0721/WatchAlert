@@ -45,7 +45,9 @@ func (tenantController tenantController) API(gin *gin.RouterGroup) {
 
 func (tenantController tenantController) Create(ctx *gin.Context) {
 	r := new(types.RequestTenantCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.Create(r)
@@ -54,7 +56,9 @@ func (tenantController tenantController) Create(ctx *gin.Context) {
 
 func (tenantController tenantController) Update(ctx *gin.Context) {
 	r := new(types.RequestTenantUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.Update(r)
@@ -63,7 +67,9 @@ func (tenantController tenantController) Update(ctx *gin.Context) {
 
 func (tenantController tenantController) Delete(ctx *gin.Context) {
 	r := new(types.RequestTenantQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.Delete(r)
@@ -72,7 +78,9 @@ func (tenantController tenantController) Delete(ctx *gin.Context) {
 
 func (tenantController tenantController) List(ctx *gin.Context) {
 	r := new(types.RequestTenantQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.List(r)
@@ -81,7 +89,9 @@ func (tenantController tenantController) List(ctx *gin.Context) {
 
 func (tenantController tenantController) Get(ctx *gin.Context) {
 	r := new(types.RequestTenantQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.Get(r)
@@ -94,7 +104,9 @@ func (tenantController tenantController) Search(ctx *gin.Context) {
 
 func (tenantController tenantController) AddUsersToTenant(ctx *gin.Context) {
 	r := new(types.RequestTenantAddUsers)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.AddUsersToTenant(r)
@@ -103,7 +115,9 @@ func (tenantController tenantController) AddUsersToTenant(ctx *gin.Context) {
 
 func (tenantController tenantController) DelUsersOfTenant(ctx *gin.Context) {
 	r := new(types.RequestTenantQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.DelUsersOfTenant(r)
@@ -112,7 +126,9 @@ func (tenantController tenantController) DelUsersOfTenant(ctx *gin.Context) {
 
 func (tenantController tenantController) GetUsersForTenant(ctx *gin.Context) {
 	r := new(types.RequestTenantQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.GetUsersForTenant(r)
@@ -121,7 +137,9 @@ func (tenantController tenantController) GetUsersForTenant(ctx *gin.Context) {
 
 func (tenantController tenantController) ChangeTenantUserRole(ctx *gin.Context) {
 	r := new(types.RequestTenantChangeUserRole)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.TenantService.ChangeTenantUserRole(r)

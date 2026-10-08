@@ -38,7 +38,9 @@ func (subscribeController subscribeController) API(gin *gin.RouterGroup) {
 
 func (subscribeController subscribeController) List(ctx *gin.Context) {
 	r := new(types.RequestSubscribeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.STenantId = tid.(string)
@@ -50,7 +52,9 @@ func (subscribeController subscribeController) List(ctx *gin.Context) {
 
 func (subscribeController subscribeController) Get(ctx *gin.Context) {
 	r := new(types.RequestSubscribeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.STenantId = tid.(string)
@@ -62,7 +66,9 @@ func (subscribeController subscribeController) Get(ctx *gin.Context) {
 
 func (subscribeController subscribeController) Create(ctx *gin.Context) {
 	r := new(types.RequestSubscribeCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.STenantId = tid.(string)
@@ -78,7 +84,9 @@ func (subscribeController subscribeController) Create(ctx *gin.Context) {
 
 func (subscribeController subscribeController) Delete(ctx *gin.Context) {
 	r := new(types.RequestSubscribeQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.STenantId = tid.(string)

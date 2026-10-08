@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"net/url"
 	"strings"
 	"watchAlert/config"
@@ -31,19 +33,19 @@ func newInterSettingService(ctx *ctx.Context) InterSettingService {
 
 func (a settingService) Save(req interface{}) (interface{}, interface{}) {
 	r := req.(*models.Settings)
-	var current models.Settings
-	if a.ctx.DB.Setting().Check() {
-		var err error
-		current, err = a.ctx.DB.Setting().Get()
-		if err != nil {
-			return nil, err
-		}
+	current, err := a.ctx.DB.Setting().Get()
+	exists := err == nil
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if err := r.MergeCredentials(&current); err != nil {
+		return nil, err
 	}
 	if err := prepareAgentModelConfig(&r.AgentConfig.Model, current.AgentConfig.Model); err != nil {
 		return nil, err
 	}
 
-	if a.ctx.DB.Setting().Check() {
+	if exists {
 		err := a.ctx.DB.Setting().Update(*r)
 		if err != nil {
 			return nil, err
@@ -84,11 +86,7 @@ func (a settingService) Get() (interface{}, interface{}) {
 		return nil, err
 	}
 	get.AppVersion = config.Version
-	get.AgentConfig.Model.APIKeySet = get.AgentConfig.Model.APIKeyEncrypted != ""
-	get.AgentConfig.Model.APIKey = ""
-	get.AgentConfig.Model.APIKeyEncrypted = ""
-
-	return get, nil
+	return get.PublicSettings(), nil
 }
 
 func prepareAgentModelConfig(model *models.AgentModelConfig, current models.AgentModelConfig) error {

@@ -11,7 +11,9 @@ const (
 )
 
 type Settings struct {
-	IsInit int `json:"isInit"`
+	CredentialsSet   map[string]bool `json:"credentialsSet,omitempty" gorm:"-"`
+	ClearCredentials []string        `json:"clearCredentials,omitempty" gorm:"-"`
+	IsInit           int             `json:"isInit"`
 	// 0 = 系统认证，1 = LDAP 认证
 	AuthType            *int                `json:"authType"`
 	AppVersion          string              `json:"appVersion" gorm:"-"`

@@ -57,7 +57,10 @@ func Auth() gin.HandlerFunc {
 
 func IsTokenValid(ctx *ctx.Context, tokenStr string) bool {
 	// Bearer Token, 获取 Token 值
-	tokenStr = tokenStr[len(tools.TokenType)+1:]
+	tokenStr, ok := tools.BearerToken(tokenStr)
+	if !ok || ctx == nil {
+		return false
+	}
 	token, err := tools.ParseToken(tokenStr)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "parse token error: %v", err)
@@ -83,7 +86,7 @@ func IsTokenValid(ctx *ctx.Context, tokenStr string) bool {
 	}
 
 	// 校验过期时间
-	ok := token.StandardClaims.VerifyExpiresAt(time.Now().Unix(), false)
+	ok = token.StandardClaims.VerifyExpiresAt(time.Now().Unix(), false)
 	if !ok {
 		return false
 	}

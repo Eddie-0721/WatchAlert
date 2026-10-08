@@ -52,7 +52,9 @@ func (probingController probingController) API(gin *gin.RouterGroup) {
 
 func (probingController probingController) List(ctx *gin.Context) {
 	r := new(types.RequestProbingRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -64,7 +66,9 @@ func (probingController probingController) List(ctx *gin.Context) {
 
 func (probingController probingController) Search(ctx *gin.Context) {
 	r := new(types.RequestProbingRuleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -76,7 +80,9 @@ func (probingController probingController) Search(ctx *gin.Context) {
 
 func (probingController probingController) Create(ctx *gin.Context) {
 	r := new(types.RequestProbingRuleCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -94,7 +100,9 @@ func (probingController probingController) Create(ctx *gin.Context) {
 
 func (probingController probingController) Update(ctx *gin.Context) {
 	r := new(types.RequestProbingRuleUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -112,7 +120,9 @@ func (probingController probingController) Update(ctx *gin.Context) {
 
 func (probingController probingController) Delete(ctx *gin.Context) {
 	r := new(types.RequestProbingRuleQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -124,7 +134,9 @@ func (probingController probingController) Delete(ctx *gin.Context) {
 
 func (probingController probingController) Once(ctx *gin.Context) {
 	r := new(types.RequestProbingOnce)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ProbingService.Once(r)
@@ -133,7 +145,9 @@ func (probingController probingController) Once(ctx *gin.Context) {
 
 func (probingController probingController) ChangeState(ctx *gin.Context) {
 	r := new(types.RequestProbeChangeState)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ProbingService.ChangeState(r)

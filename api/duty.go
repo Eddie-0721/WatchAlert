@@ -44,7 +44,9 @@ func (dutyController dutyController) API(gin *gin.RouterGroup) {
 
 func (dutyController dutyController) List(ctx *gin.Context) {
 	r := new(types.RequestDutyManagementQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -56,7 +58,9 @@ func (dutyController dutyController) List(ctx *gin.Context) {
 
 func (dutyController dutyController) Create(ctx *gin.Context) {
 	r := new(types.RequestDutyManagementCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		userName := jwtUtils.GetUser(ctx.Request.Header.Get("Authorization"))
@@ -71,7 +75,9 @@ func (dutyController dutyController) Create(ctx *gin.Context) {
 
 func (dutyController dutyController) Update(ctx *gin.Context) {
 	r := new(types.RequestDutyManagementUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		userName := jwtUtils.GetUser(ctx.Request.Header.Get("Authorization"))
@@ -86,7 +92,9 @@ func (dutyController dutyController) Update(ctx *gin.Context) {
 
 func (dutyController dutyController) Delete(ctx *gin.Context) {
 	r := new(types.RequestDutyManagementQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
@@ -98,7 +106,9 @@ func (dutyController dutyController) Delete(ctx *gin.Context) {
 
 func (dutyController dutyController) Get(ctx *gin.Context) {
 	r := new(types.RequestDutyManagementQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

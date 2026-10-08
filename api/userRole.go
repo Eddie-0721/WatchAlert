@@ -42,7 +42,9 @@ func (userRoleController userRoleController) API(gin *gin.RouterGroup) {
 
 func (userRoleController userRoleController) Create(ctx *gin.Context) {
 	r := new(types.RequestUserRoleCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserRoleService.Create(r)
@@ -51,7 +53,9 @@ func (userRoleController userRoleController) Create(ctx *gin.Context) {
 
 func (userRoleController userRoleController) Update(ctx *gin.Context) {
 	r := new(types.RequestUserRoleUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserRoleService.Update(r)
@@ -60,7 +64,9 @@ func (userRoleController userRoleController) Update(ctx *gin.Context) {
 
 func (userRoleController userRoleController) Delete(ctx *gin.Context) {
 	r := new(types.RequestUserRoleQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserRoleService.Delete(r)
@@ -69,7 +75,9 @@ func (userRoleController userRoleController) Delete(ctx *gin.Context) {
 
 func (userRoleController userRoleController) List(ctx *gin.Context) {
 	r := new(types.RequestUserRoleQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.UserRoleService.List(r)

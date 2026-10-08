@@ -38,6 +38,9 @@ func newInterRuleService(ctx *ctx.Context) InterRuleService {
 
 func (rs ruleService) Create(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestRuleCreate)
+	if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, r.DatasourceType, r.DatasourceIdList); err != nil {
+		return nil, err
+	}
 	ok := rs.ctx.DB.Rule().GetQuota(r.TenantId)
 	if !ok {
 		return nil, fmt.Errorf("创建失败, 配额不足")
@@ -98,10 +101,18 @@ func (rs ruleService) Create(req interface{}) (interface{}, interface{}) {
 
 func (rs ruleService) Update(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestRuleUpdate)
+	if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, r.DatasourceType, r.DatasourceIdList); err != nil {
+		return nil, err
+	}
 	oldRule := models.AlertRule{}
-	rs.ctx.DB.DB().Model(&models.AlertRule{}).
+	if err := rs.ctx.DB.DB().Model(&models.AlertRule{}).
 		Where("tenant_id = ? AND rule_id = ?", r.TenantId, r.RuleId).
-		First(&oldRule)
+		First(&oldRule).Error; err != nil {
+		return nil, err
+	}
+	if oldRule.Enabled == nil || r.Enabled == nil {
+		return nil, fmt.Errorf("规则启用状态不能为空")
+	}
 
 	if oldRule.FaultCenterId != r.FaultCenterId {
 		fingerprints := rs.ctx.Redis.Alert().GetFingerprintsByRuleId(oldRule.TenantId, oldRule.FaultCenterId, oldRule.RuleId)
@@ -361,6 +372,12 @@ func (rs ruleService) Import(req interface{}) (interface{}, interface{}) {
 	if len(rules) == 0 {
 		return nil, fmt.Errorf("导入失败, 识别到 0 条规则")
 	}
+	// Validate the complete import before persisting any item.
+	for _, rule := range rules {
+		if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, rule.DatasourceType, rule.DatasourceIdList); err != nil {
+			return nil, err
+		}
+	}
 
 	for _, rule := range rules {
 		if len(rule.RuleGroupId) == 0 {
@@ -438,26 +455,14 @@ func (rs ruleService) Change(req interface{}) (interface{}, interface{}) {
 				}
 				break
 			case "datasource_ids":
-				if v, ok := value.([]interface{}); ok {
-					var datasourceIds []string
-					for _, val := range v {
-						ds, err := rs.ctx.DB.Datasource().Get(val.(string))
-						if err != nil {
-							logc.Errorf(rs.ctx.Ctx, "获取数据源信息错误, id: %s, error: %v", val.(string), err)
-						}
-						if ds.Type != rule.DatasourceType {
-							continue
-						}
-						datasourceIds = append(datasourceIds, fmt.Sprintf("%v", val))
-					}
-					if len(datasourceIds) != 0 {
-						rule.DatasourceIdList = datasourceIds
-					}
-				} else if v, ok := value.([]string); ok {
-					rule.DatasourceIdList = v
-				} else {
-					return nil, fmt.Errorf("字段 %s 的值类型错误", field)
+				ids, err := datasourceIDs(value)
+				if err != nil {
+					return nil, err
 				}
+				if err := validateDatasourceReferences(rs.ctx.DB.Datasource(), r.TenantId, rule.DatasourceType, ids); err != nil {
+					return nil, err
+				}
+				rule.DatasourceIdList = ids
 				break
 			case "fault_center_id":
 				if v, ok := value.(string); ok {

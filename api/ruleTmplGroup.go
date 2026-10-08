@@ -42,7 +42,9 @@ func (ruleTmplGroupController ruleTmplGroupController) API(gin *gin.RouterGroup)
 
 func (ruleTmplGroupController ruleTmplGroupController) Create(ctx *gin.Context) {
 	r := new(types.RequestRuleTemplateGroupCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.RuleTmplGroupService.Create(r)
@@ -51,7 +53,9 @@ func (ruleTmplGroupController ruleTmplGroupController) Create(ctx *gin.Context) 
 
 func (ruleTmplGroupController ruleTmplGroupController) Update(ctx *gin.Context) {
 	r := new(types.RequestRuleTemplateGroupUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.RuleTmplGroupService.Update(r)
@@ -60,7 +64,9 @@ func (ruleTmplGroupController ruleTmplGroupController) Update(ctx *gin.Context) 
 
 func (ruleTmplGroupController ruleTmplGroupController) Delete(ctx *gin.Context) {
 	r := new(types.RequestRuleTemplateGroupQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.RuleTmplGroupService.Delete(r)
@@ -69,7 +75,9 @@ func (ruleTmplGroupController ruleTmplGroupController) Delete(ctx *gin.Context) 
 
 func (ruleTmplGroupController ruleTmplGroupController) List(ctx *gin.Context) {
 	r := new(types.RequestRuleTemplateGroupQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.RuleTmplGroupService.List(r)

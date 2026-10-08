@@ -12,10 +12,9 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build -o /tmp/watchalert ./cmd/main.go
-      - run: go test ./internal/services ./internal/models ./pkg/agenttoken ./pkg/secretbox
-      # Existing unrelated repo files have vet findings; keep the regression
-      # isolated without suppressing vet for the main suites.
-      - run: go test -vet=off ./internal/repo -run '^TestSilenceUpdatePersistsFutureStatusAndLabels$'
+      - run: go test ./api ./internal/middleware ./internal/repo ./internal/services ./internal/models ./pkg/tools ./pkg/agenttoken ./pkg/secretbox ./pkg/oidc
+      # This remains a legacy compatibility check until R0.4 migrates the
+      # reference. The independent WatchAlert-agent repository owns its CI.
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

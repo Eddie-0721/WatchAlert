@@ -49,7 +49,9 @@ func (apiKeyController apiKeyController) Create(ctx *gin.Context) {
 	userId := tools.GetUserID(token)
 	r.UserId = userId
 
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ApiKeyService.Create(r)
@@ -64,7 +66,9 @@ func (apiKeyController apiKeyController) List(ctx *gin.Context) {
 	userId := tools.GetUserID(token)
 	r.UserId = userId
 
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ApiKeyService.List(r)
@@ -79,7 +83,9 @@ func (apiKeyController apiKeyController) Get(ctx *gin.Context) {
 	userId := tools.GetUserID(token)
 	r.UserId = userId
 
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ApiKeyService.Get(r)
@@ -94,7 +100,9 @@ func (apiKeyController apiKeyController) Update(ctx *gin.Context) {
 	userId := tools.GetUserID(token)
 	r.UserId = userId
 
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ApiKeyService.Update(r)
@@ -109,7 +117,9 @@ func (apiKeyController apiKeyController) Delete(ctx *gin.Context) {
 	userId := tools.GetUserID(token)
 	r.UserId = userId
 
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ApiKeyService.Delete(r)

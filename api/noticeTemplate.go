@@ -45,7 +45,9 @@ func (noticeTemplateController noticeTemplateController) API(gin *gin.RouterGrou
 
 func (noticeTemplateController noticeTemplateController) Create(ctx *gin.Context) {
 	r := new(types.RequestNoticeTemplateCreate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -60,7 +62,9 @@ func (noticeTemplateController noticeTemplateController) Create(ctx *gin.Context
 
 func (noticeTemplateController noticeTemplateController) Update(ctx *gin.Context) {
 	r := new(types.RequestNoticeTemplateUpdate)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		tokenStr := ctx.Request.Header.Get("Authorization")
@@ -75,7 +79,9 @@ func (noticeTemplateController noticeTemplateController) Update(ctx *gin.Context
 
 func (noticeTemplateController noticeTemplateController) Delete(ctx *gin.Context) {
 	r := new(types.RequestNoticeTemplateQuery)
-	BindJson(ctx, r)
+	if !BindJson(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.NoticeTmplService.Delete(r)
@@ -84,7 +90,9 @@ func (noticeTemplateController noticeTemplateController) Delete(ctx *gin.Context
 
 func (noticeTemplateController noticeTemplateController) List(ctx *gin.Context) {
 	r := new(types.RequestNoticeTemplateQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.NoticeTmplService.List(r)
@@ -93,7 +101,9 @@ func (noticeTemplateController noticeTemplateController) List(ctx *gin.Context) 
 
 func (noticeTemplateController noticeTemplateController) Get(ctx *gin.Context) {
 	r := new(types.RequestNoticeTemplateQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.NoticeTmplService.Get(r)

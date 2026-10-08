@@ -101,12 +101,12 @@ func FormatJson(s string) string {
 		var data map[string]interface{}
 		err := sonic.Unmarshal([]byte(s), &data)
 		if err != nil {
-			logc.Errorf(context.Background(), fmt.Sprintf("Error parsing JSON: %s", err.Error()))
+			logc.Errorf(context.Background(), "Error parsing JSON: %s", err.Error())
 		} else {
 			// 格式化JSON并输出
 			formattedJson, err := json.MarshalIndent(data, "", "  ")
 			if err != nil {
-				logc.Errorf(context.Background(), fmt.Sprintf("Error marshalling JSON: %s", err.Error()))
+				logc.Errorf(context.Background(), "Error marshalling JSON: %s", err.Error())
 			} else {
 				ns = string(formattedJson)
 			}

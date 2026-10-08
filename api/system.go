@@ -16,7 +16,9 @@ func (systemController systemController) GetOidcInfo(ctx *gin.Context) {
 
 func (systemController systemController) CallBack(ctx *gin.Context) {
 	r := new(types.RequestOidcCodeQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	Service(ctx, func() (interface{}, interface{}) { return services.OidcService.CallBack(ctx, r) })
 }

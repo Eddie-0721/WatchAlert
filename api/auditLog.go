@@ -26,7 +26,9 @@ func (auditLogController auditLogController) API(gin *gin.RouterGroup) {
 
 func (auditLogController auditLogController) List(ctx *gin.Context) {
 	r := new(types.RequestAuditLogQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)
 	Service(ctx, func() (interface{}, interface{}) {
@@ -36,7 +38,9 @@ func (auditLogController auditLogController) List(ctx *gin.Context) {
 
 func (auditLogController auditLogController) Search(ctx *gin.Context) {
 	r := new(types.RequestAuditLogQuery)
-	BindQuery(ctx, r)
+	if !BindQuery(ctx, r) {
+		return
+	}
 
 	tid, _ := ctx.Get("TenantID")
 	r.TenantId = tid.(string)

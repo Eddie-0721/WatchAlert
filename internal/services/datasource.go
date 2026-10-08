@@ -67,6 +67,10 @@ func (ds datasourceService) Create(req interface{}) (interface{}, interface{}) {
 
 func (ds datasourceService) Update(req interface{}) (interface{}, interface{}) {
 	dataSource := req.(*types.RequestDatasourceUpdate)
+	previous, err := ds.ctx.DB.Datasource().GetForTenant(dataSource.TenantId, dataSource.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	data := models.AlertDataSource{
 		TenantId:         dataSource.TenantId,
@@ -87,7 +91,10 @@ func (ds datasourceService) Update(req interface{}) (interface{}, interface{}) {
 		Enabled:          dataSource.Enabled,
 	}
 
-	err := ds.ctx.DB.Datasource().Update(data)
+	if err = data.MergeCredentials(previous, dataSource.ClearCredentials); err != nil {
+		return nil, err
+	}
+	err = ds.ctx.DB.Datasource().Update(data)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +109,9 @@ func (ds datasourceService) Update(req interface{}) (interface{}, interface{}) {
 
 func (ds datasourceService) Delete(req interface{}) (interface{}, interface{}) {
 	dataSource := req.(*types.RequestDatasourceQuery)
+	if _, err := ds.ctx.DB.Datasource().GetForTenant(dataSource.TenantId, dataSource.ID); err != nil {
+		return nil, err
+	}
 	err := ds.ctx.DB.Datasource().Delete(dataSource.TenantId, dataSource.ID)
 	if err != nil {
 		return nil, err
@@ -114,22 +124,27 @@ func (ds datasourceService) Delete(req interface{}) (interface{}, interface{}) {
 
 func (ds datasourceService) Get(req interface{}) (interface{}, interface{}) {
 	dataSource := req.(*types.RequestDatasourceQuery)
-	data, err := ds.ctx.DB.Datasource().Get(dataSource.ID)
+	data, err := ds.ctx.DB.Datasource().GetForTenant(dataSource.TenantId, dataSource.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	return data, nil
+	return data.PublicDatasource(), nil
 }
 
 func (ds datasourceService) List(req interface{}) (interface{}, interface{}) {
 	var newData []models.AlertDataSource
 	dataSource := req.(*types.RequestDatasourceQuery)
+	if dataSource.TenantId == "" {
+		return nil, fmt.Errorf("租户ID不能为空")
+	}
 	data, err := ds.ctx.DB.Datasource().List(dataSource.TenantId, dataSource.ID, dataSource.Type, dataSource.Query)
 	if err != nil {
 		return nil, err
 	}
-	newData = data
+	for _, source := range data {
+		newData = append(newData, source.PublicDatasource())
+	}
 
 	return newData, nil
 }

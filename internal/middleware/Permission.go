@@ -14,7 +14,9 @@ import (
 func Permission() gin.HandlerFunc {
 	return func(context *gin.Context) {
 		tid := context.Request.Header.Get(TenantIDHeaderKey)
-		if tid == "null" || tid == "" {
+		if !validTenantID(tid) {
+			response.PermissionFail(context)
+			context.Abort()
 			return
 		}
 
@@ -27,7 +29,7 @@ func Permission() gin.HandlerFunc {
 		}
 
 		userId, ok := userIdValue.(string)
-		if !ok {
+		if !ok || userId == "" {
 			response.TokenFail(context)
 			context.Abort()
 			return
@@ -63,13 +65,18 @@ func Permission() gin.HandlerFunc {
 			context.Abort()
 			return
 		}
+		if tenantUserInfo.UserID != userId || tenantUserInfo.UserRole == "" {
+			response.PermissionFail(context)
+			context.Abort()
+			return
+		}
 
 		// 获取角色权限
 		var role models.UserRole
 		err = c.DB.DB().Model(&models.UserRole{}).Where("id = ?", tenantUserInfo.UserRole).First(&role).Error
 		if err != nil {
 			errMsg := fmt.Sprintf("获取用户 %s 的角色失败: %s", user.UserName, err.Error())
-			logc.Errorf(c.Ctx, errMsg)
+			logc.Error(c.Ctx, errMsg)
 			response.Fail(context, errMsg, "failed")
 			context.Abort()
 			return
@@ -84,6 +91,20 @@ func Permission() gin.HandlerFunc {
 		}
 
 		context.Next()
+	}
+}
+
+// PlatformAdmin is for global configuration, not tenant role permissions.
+// Identity must be supplied by Auth; request headers/body cannot grant it.
+func PlatformAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, ok := c.Get("UserId")
+		if !ok || userID != "admin" {
+			response.PermissionFail(c)
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }
 
