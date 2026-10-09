@@ -33,14 +33,18 @@ type Server struct {
 }
 
 type Database struct {
-	Type    string `json:"type"`    // mysql 或 sqlite
-	Host    string `json:"host"`    // MySQL 主机地址
-	Port    string `json:"port"`    // MySQL 端口
-	User    string `json:"user"`    // MySQL 用户名
-	Pass    string `json:"pass"`    // MySQL 密码
-	DBName  string `json:"dbName"`  // MySQL 数据库名
-	Timeout string `json:"timeout"` // MySQL 连接超时
-	Path    string `json:"path"`    // SQLite 数据库文件路径
+	Type                   string `json:"type"`    // mysql 或 sqlite
+	Host                   string `json:"host"`    // MySQL 主机地址
+	Port                   string `json:"port"`    // MySQL 端口
+	User                   string `json:"user"`    // MySQL 用户名
+	Pass                   string `json:"pass"`    // MySQL 密码
+	DBName                 string `json:"dbName"`  // MySQL 数据库名
+	Timeout                string `json:"timeout"` // MySQL 连接超时
+	Path                   string `json:"path"`    // SQLite 数据库文件路径
+	MaxOpenConns           int    `json:"maxOpenConns"`
+	MaxIdleConns           *int   `json:"maxIdleConns"`
+	ConnMaxLifetimeSeconds int    `json:"connMaxLifetimeSeconds"`
+	ConnMaxIdleTimeSeconds int    `json:"connMaxIdleTimeSeconds"`
 }
 
 type Redis struct {

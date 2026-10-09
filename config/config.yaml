@@ -19,6 +19,12 @@ Database:
   pass: w8t.123
   dbName: watchalert
   timeout: 10s
+  # Optional MySQL pool settings (defaults shown; limits are per process).
+  # Leave commented when using SQLite, which retains a single connection.
+  # maxOpenConns: 32
+  # maxIdleConns: 8
+  # connMaxLifetimeSeconds: 1800
+  # connMaxIdleTimeSeconds: 300
   # SQLite 配置 (当 type 为 sqlite 时使用)
   path: data/w8t.db
 

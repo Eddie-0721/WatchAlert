@@ -212,7 +212,7 @@ func (t *AlertRule) processSingleDatasource(requestCtx context.Context, dsId str
 			logc.Errorf(t.ctx.Ctx, "Datasource evaluation panic, RuleId: %s, DatasourceId: %s", rule.RuleId, dsId)
 		}
 	}()
-	instance, err := t.ctx.DB.Datasource().GetForTenant(rule.TenantId, dsId)
+	instance, err := t.ctx.DB.Datasource().GetForTenantContext(requestCtx, rule.TenantId, dsId)
 	if err != nil {
 		logc.Errorf(t.ctx.Ctx, "Failed to get datasource instance %s: %v", dsId, err)
 		return failedEvaluation("datasource_unavailable")

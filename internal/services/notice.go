@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -21,7 +22,7 @@ type InterNoticeService interface {
 	Update(req interface{}) (interface{}, interface{})
 	Delete(req interface{}) (interface{}, interface{})
 	Get(req interface{}) (interface{}, interface{})
-	ListRecord(req interface{}) (interface{}, interface{})
+	ListRecord(context.Context, interface{}) (interface{}, interface{})
 	GetRecordMetric(req interface{}) (interface{}, interface{})
 	DeleteRecord(req interface{}) (interface{}, interface{})
 	Test(req interface{}) (interface{}, interface{})
@@ -100,9 +101,11 @@ func (n noticeService) Get(req interface{}) (interface{}, interface{}) {
 	return data, nil
 }
 
-func (n noticeService) ListRecord(req interface{}) (interface{}, interface{}) {
+func (n noticeService) ListRecord(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestNoticeQuery)
-	data, err := n.ctx.DB.Notice().ListRecord(r.TenantId, r.EventId, r.Severity, r.Status, r.Uuid, r.Query, r.Page)
+	queryCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	data, err := n.ctx.DB.Notice().ListRecord(queryCtx, r.TenantId, r.EventId, r.Severity, r.Status, r.Uuid, r.Query, r.Page)
 	if err != nil {
 		return nil, err
 	}

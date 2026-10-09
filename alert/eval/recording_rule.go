@@ -118,7 +118,7 @@ func (t *RecordingRule) processSingleDatasource(requestCtx context.Context, rule
 		return
 	}
 	defer func() { <-slots }()
-	instance, err := t.ctx.DB.Datasource().GetForTenant(rule.TenantId, rule.DatasourceId)
+	instance, err := t.ctx.DB.Datasource().GetForTenantContext(requestCtx, rule.TenantId, rule.DatasourceId)
 	if err != nil {
 		logc.Errorf(t.ctx.Ctx, "Failed to get datasource instance %s: %v", rule.DatasourceId, err)
 		return

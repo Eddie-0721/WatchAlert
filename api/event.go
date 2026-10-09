@@ -108,7 +108,7 @@ func (alertEventController alertEventController) ListHistoryEvent(ctx *gin.Conte
 	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.EventService.ListHistoryEvent(r)
+		return services.EventService.ListHistoryEvent(ctx.Request.Context(), r)
 	})
 }
 

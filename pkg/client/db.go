@@ -16,17 +16,26 @@ import (
 )
 
 type DBConfig struct {
-	Type    string // 数据库类型: mysql 或 sqlite
-	Host    string // MySQL 主机地址
-	Port    string // MySQL 端口
-	User    string // MySQL 用户名
-	Pass    string // MySQL 密码
-	DBName  string // MySQL 数据库名
-	Timeout string // MySQL 连接超时
-	Path    string // SQLite 数据库文件路径
+	Type                   string // 数据库类型: mysql 或 sqlite
+	Host                   string // MySQL 主机地址
+	Port                   string // MySQL 端口
+	User                   string // MySQL 用户名
+	Pass                   string // MySQL 密码
+	DBName                 string // MySQL 数据库名
+	Timeout                string // MySQL 连接超时
+	Path                   string // SQLite 数据库文件路径
+	MaxOpenConns           int
+	MaxIdleConns           *int
+	ConnMaxLifetimeSeconds int
+	ConnMaxIdleTimeSeconds int
 }
 
-func NewDBClient(dbcfg DBConfig) *gorm.DB {
+// OpenDB connects without migrating schemas or rewriting permission records.
+// Maintenance commands must use this rather than the application initializer.
+func OpenDB(dbcfg DBConfig) (*gorm.DB, error) {
+	if _, err := resolvePoolLimits(dbcfg); err != nil {
+		return nil, err
+	}
 	var db *gorm.DB
 	var err error
 
@@ -41,12 +50,29 @@ func NewDBClient(dbcfg DBConfig) *gorm.DB {
 	case "mysql":
 		db, err = initMySQLDB(dbcfg)
 	default:
-		logc.Errorf(context.Background(), "unsupported database type: %s", dbcfg.Type)
-		return nil
+		return nil, fmt.Errorf("unsupported database type: %s", dbcfg.Type)
 	}
 
 	if err != nil {
-		logc.Errorf(context.Background(), "failed to connect database: %s", err.Error())
+		return nil, err
+	}
+	if err := configurePool(db, dbcfg); err != nil {
+		closeDB(db)
+		return nil, err
+	}
+	return db, nil
+}
+
+func closeDB(db *gorm.DB) {
+	if conn, err := db.DB(); err == nil {
+		_ = conn.Close()
+	}
+}
+
+func NewDBClient(dbcfg DBConfig) *gorm.DB {
+	db, err := OpenDB(dbcfg)
+	if err != nil {
+		logc.Errorf(context.Background(), "failed to initialize database: %s", err.Error())
 		return nil
 	}
 
@@ -93,6 +119,7 @@ func NewDBClient(dbcfg DBConfig) *gorm.DB {
 	)
 	if err != nil {
 		logc.Error(context.Background(), err.Error())
+		closeDB(db)
 		return nil
 	}
 
@@ -109,6 +136,9 @@ func NewDBClient(dbcfg DBConfig) *gorm.DB {
 
 // initMySQLDB 初始化 MySQL 数据库连接
 func initMySQLDB(config DBConfig) (*gorm.DB, error) {
+	if config.Timeout == "" {
+		config.Timeout = "10s"
+	}
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4,utf8&parseTime=True&loc=Local&timeout=%s",
 		config.User,
 		config.Pass,
@@ -117,7 +147,6 @@ func initMySQLDB(config DBConfig) (*gorm.DB, error) {
 		config.DBName,
 		config.Timeout)
 
-	logc.Infof(context.Background(), "connecting to MySQL database: %s:%s/%s", config.Host, config.Port, config.DBName)
 	return gorm.Open(mysql.Open(dsn), &gorm.Config{})
 }
 
@@ -134,7 +163,6 @@ func initSQLiteDB(config DBConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	logc.Infof(context.Background(), "connecting to SQLite database: %s", config.Path)
 	return gorm.Open(sqlite.Open(config.Path), &gorm.Config{})
 }
 

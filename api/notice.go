@@ -147,7 +147,7 @@ func (noticeController noticeController) ListRecord(ctx *gin.Context) {
 	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.NoticeService.ListRecord(r)
+		return services.NoticeService.ListRecord(ctx.Request.Context(), r)
 	})
 }
 

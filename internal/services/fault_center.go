@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"time"
 	"watchAlert/alert"
 	"watchAlert/internal/ctx"
@@ -22,7 +23,7 @@ type (
 		List(req interface{}) (data interface{}, err interface{})
 		Get(req interface{}) (data interface{}, err interface{})
 		Reset(req interface{}) (data interface{}, err interface{})
-		Slo(req interface{}) (data interface{}, err interface{})
+		Slo(context.Context, interface{}) (data interface{}, err interface{})
 	}
 )
 
@@ -217,88 +218,23 @@ func (f faultCenterService) Reset(req interface{}) (data interface{}, err interf
 	return nil, nil
 }
 
-func (f faultCenterService) Slo(req interface{}) (data interface{}, err interface{}) {
+func (f faultCenterService) Slo(requestCtx context.Context, req interface{}) (data interface{}, err interface{}) {
 	r := req.(*types.RequestFaultCenterQuery)
-	// 拉取近7天的历史事件（一次性拉全量，后面按天聚合）
-	eventsResp, eventErr := f.ctx.DB.Event().GetHistoryEvent(types.RequestAlertHisEventQuery{
-		TenantId:      r.TenantId,
-		FaultCenterId: r.ID,
-		Page: models.Page{
-			Index: 1,
-			Size:  999999,
-		},
-	})
-	if eventErr != nil {
-		return nil, eventErr
-	}
-	eventsList := eventsResp.List
-
-	// 准备返回的 7 天数组（按时间从旧到新）
-	mttrArr := make([]float64, 0, 7)
-	mttaArr := make([]float64, 0, 7)
-
 	now := time.Now()
-	// 生成最近 7 天，从 6 天前 到 今天（顺序：旧 -> 新）
-	for i := 6; i >= 0; i-- {
-		day := now.AddDate(0, 0, -i)
-		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location()).Unix()
-		end := time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, day.Location()).Unix()
-
-		mttr, _ := f.calculateMTTRRange(eventsList, start, end)
-		mtta, _ := f.calculateMTTARange(eventsList, start, end)
-
-		mttrArr = append(mttrArr, mttr)
-		mttaArr = append(mttaArr, mtta)
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -6)
+	boundaries := make([]int64, 8)
+	for i := range boundaries {
+		boundaries[i] = start.AddDate(0, 0, i).Unix()
 	}
-
-	return types.RequestFaultCenterSLO{
-		MTTR: mttrArr,
-		MTTA: mttaArr,
-	}, nil
-}
-
-func (f faultCenterService) calculateMTTRRange(eventsList []models.AlertHisEvent, start, end int64) (float64, error) {
-	var totalRepairTime float64
-	var recoveredCount int
-
-	for _, event := range eventsList {
-		if event.RecoverTime > 0 && event.RecoverTime >= start && event.RecoverTime <= end {
-			repairTime := float64(event.RecoverTime - event.FirstTriggerTime)
-			if repairTime > 0 {
-				totalRepairTime += repairTime
-				recoveredCount++
-			}
-		}
+	queryCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	days, queryErr := f.ctx.DB.Event().DailySLO(queryCtx, r.TenantId, r.ID, boundaries)
+	if queryErr != nil {
+		return nil, queryErr
 	}
-
-	if recoveredCount == 0 {
-		return 0, nil
+	result := types.RequestFaultCenterSLO{MTTR: make([]float64, 7), MTTA: make([]float64, 7)}
+	for i, day := range days {
+		result.MTTR[i], result.MTTA[i] = day.MTTR, day.MTTA
 	}
-	return totalRepairTime / float64(recoveredCount), nil
-}
-
-func (f faultCenterService) calculateMTTARange(eventsList []models.AlertHisEvent, start, end int64) (float64, error) {
-	var totalRespTime float64
-	var ackCount int
-
-	for _, ev := range eventsList {
-		ack := ev.ConfirmState.ConfirmActionTime
-		first := ev.FirstTriggerTime
-		if ack <= 0 || first <= 0 {
-			continue
-		}
-		if ack < start || ack > end {
-			continue
-		}
-		resp := float64(ack - first)
-		if resp >= 0 {
-			totalRespTime += resp
-			ackCount++
-		}
-	}
-
-	if ackCount == 0 {
-		return 0, nil
-	}
-	return totalRespTime / float64(ackCount), nil
+	return result, nil
 }

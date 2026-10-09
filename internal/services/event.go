@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ type eventService struct {
 
 type InterEventService interface {
 	ListCurrentEvent(req interface{}) (interface{}, interface{})
-	ListHistoryEvent(req interface{}) (interface{}, interface{})
+	ListHistoryEvent(context.Context, interface{}) (interface{}, interface{})
 	ProcessAlertEvent(req interface{}) (interface{}, interface{})
 	DeleteAlertEvent(req interface{}) (interface{}, interface{})
 
@@ -331,9 +332,11 @@ func labelValue(labels map[string]interface{}, aliases ...string) string {
 	return ""
 }
 
-func (e eventService) ListHistoryEvent(req interface{}) (interface{}, interface{}) {
+func (e eventService) ListHistoryEvent(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestAlertHisEventQuery)
-	data, err := e.ctx.DB.Event().GetHistoryEvent(*r)
+	queryCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	data, err := e.ctx.DB.Event().GetHistoryEvent(queryCtx, *r)
 	if err != nil {
 		return nil, err
 	}

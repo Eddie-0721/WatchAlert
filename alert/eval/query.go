@@ -571,7 +571,7 @@ func cloudWatch(requestCtx context.Context, ctx *ctx.Context, datasourceId, data
 
 func kubernetesEvent(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	// 获取数据源实例信息
-	datasourceObj, err := ctx.DB.Datasource().GetForTenant(rule.TenantId, datasourceId)
+	datasourceObj, err := ctx.DB.Datasource().GetForTenantContext(requestCtx, rule.TenantId, datasourceId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源实例失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 		return failedEvaluation("datasource_unavailable")

@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"gorm.io/gorm"
 	"watchAlert/internal/models"
 	"watchAlert/internal/types"
@@ -12,8 +13,9 @@ type (
 	}
 
 	InterEventRepo interface {
-		GetHistoryEvent(r types.RequestAlertHisEventQuery) (types.ResponseHistoryEventList, error)
+		GetHistoryEvent(context.Context, types.RequestAlertHisEventQuery) (types.ResponseHistoryEventList, error)
 		CreateHistoryEvent(r models.AlertHisEvent) error
+		DailySLO(context.Context, string, string, []int64) ([]DailySLO, error)
 	}
 )
 
@@ -26,18 +28,24 @@ func newEventInterface(db *gorm.DB, g InterGormDBCli) InterEventRepo {
 	}
 }
 
-func (e EventRepo) GetHistoryEvent(r types.RequestAlertHisEventQuery) (types.ResponseHistoryEventList, error) {
+func (e EventRepo) GetHistoryEvent(requestCtx context.Context, r types.RequestAlertHisEventQuery) (types.ResponseHistoryEventList, error) {
 	var data []models.AlertHisEvent
 	var count int64
 
-	db := e.DB().Model(&models.AlertHisEvent{})
-	db.Where("tenant_id = ?", r.TenantId)
+	var err error
+	// The existing HTML export requests at most 10,000 rows through this API.
+	// Preserve it until a separate paginated/streaming export is available.
+	r.Page, err = historyPage(r.Page, 10000)
+	if err != nil {
+		return types.ResponseHistoryEventList{}, err
+	}
+	db := e.DB().WithContext(requestCtx).Model(&models.AlertHisEvent{}).Where("tenant_id = ?", r.TenantId)
 	if r.FaultCenterId != "" {
-		db.Where("fault_center_id = ?", r.FaultCenterId)
+		db = db.Where("fault_center_id = ?", r.FaultCenterId)
 	}
 
 	if r.Query != "" {
-		db.Where("rule_name LIKE ? OR severity LIKE ? OR annotations LIKE ? OR fingerprint LIKE ?", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%")
+		db = db.Where("(rule_name LIKE ? OR severity LIKE ? OR annotations LIKE ? OR fingerprint LIKE ?)", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%", "%"+r.Query+"%")
 	}
 
 	if r.DatasourceType != "" {
@@ -58,11 +66,11 @@ func (e EventRepo) GetHistoryEvent(r types.RequestAlertHisEventQuery) (types.Res
 
 	switch r.SortOrder {
 	case models.SortOrderASC:
-		db.Order("alarm_duration asc")
+		db = db.Order("alarm_duration asc")
 	case models.SortOrderDesc:
-		db.Order("alarm_duration desc")
+		db = db.Order("alarm_duration desc")
 	default:
-		db.Order("recover_time desc")
+		db = db.Order("recover_time desc")
 	}
 
 	if err := db.Limit(int(r.Page.Size)).Offset(int((r.Page.Index - 1) * r.Page.Size)).Find(&data).Error; err != nil {

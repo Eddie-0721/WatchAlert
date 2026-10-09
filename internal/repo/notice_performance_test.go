@@ -62,3 +62,58 @@ func TestNoticeTrendUsesOneGroupedQuery(t *testing.T) {
 		t.Fatal("empty tenant", result, err)
 	}
 }
+
+func TestNoticePageFiltersLimitsAndCancellation(t *testing.T) {
+	db := eventTestDB(t)
+	if err := db.AutoMigrate(&models.NoticeRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []models.NoticeRecord{
+		{TenantId: "t", EventId: "a", CreateAt: 1, AlarmMsg: "match"},
+		{TenantId: "t", EventId: "b", CreateAt: 2, ErrMsg: "match"},
+		{TenantId: "other", EventId: "c", CreateAt: 3, ErrMsg: "match"},
+		{TenantId: "t", EventId: "d", CreateAt: 4, AlarmMsg: "excluded"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	r := NoticeRepo{entryRepo: entryRepo{db: db}}
+	result, err := r.ListRecord(context.Background(), "t", "", "", "", "", "match", models.Page{Index: 2, Size: 1})
+	if err != nil || result.Total != 2 || len(result.List) != 1 || result.List[0].EventId != "a" {
+		t.Fatal(result, err)
+	}
+	result, err = r.ListRecord(context.Background(), "t", "", "", "", "", "", models.Page{})
+	if err != nil || result.Size != 20 || result.Index != 1 || result.Total != 3 {
+		t.Fatal(result, err)
+	}
+	if _, err = r.ListRecord(context.Background(), "t", "", "", "", "", "", models.Page{Size: 101}); err == nil {
+		t.Fatal("unbounded page allowed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = r.ListRecord(ctx, "t", "", "", "", "", "", models.Page{}); err == nil {
+		t.Fatal("cancelled request succeeded")
+	}
+}
+
+func TestDatasourceLookupHonorsCancellationAndTenant(t *testing.T) {
+	db := eventTestDB(t)
+	if err := db.AutoMigrate(&models.AlertDataSource{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.AlertDataSource{TenantId: "t", ID: "source"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	r := DatasourceRepo{entryRepo: entryRepo{db: db}}
+	if _, err := r.GetForTenantContext(context.Background(), "t", "source"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.GetForTenantContext(context.Background(), "other", "source"); err == nil {
+		t.Fatal("tenant filter missing")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.GetForTenantContext(ctx, "t", "source"); err == nil {
+		t.Fatal("cancelled lookup succeeded")
+	}
+}

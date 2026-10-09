@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"watchAlert/internal/models"
@@ -17,6 +18,7 @@ type (
 		List(tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error)
 		Get(datasourceId string) (models.AlertDataSource, error)
 		GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error)
+		GetForTenantContext(context.Context, string, string) (models.AlertDataSource, error)
 		Create(r models.AlertDataSource) error
 		Update(r models.AlertDataSource) error
 		Delete(tenantId, datasourceId string) error
@@ -78,11 +80,15 @@ func (ds DatasourceRepo) Get(datasourceId string) (models.AlertDataSource, error
 // Get method is kept for compatibility with legacy callers, but it must never
 // be used for a user-scoped data source request.
 func (ds DatasourceRepo) GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error) {
+	return ds.GetForTenantContext(context.Background(), tenantId, datasourceId)
+}
+
+func (ds DatasourceRepo) GetForTenantContext(requestCtx context.Context, tenantId, datasourceId string) (models.AlertDataSource, error) {
 	var data models.AlertDataSource
 	if strings.TrimSpace(tenantId) == "" || strings.TrimSpace(datasourceId) == "" || tenantId == "null" || tenantId == "undefined" {
 		return data, fmt.Errorf("租户和数据源ID不能为空")
 	}
-	err := ds.db.Model(&models.AlertDataSource{}).
+	err := ds.db.WithContext(requestCtx).Model(&models.AlertDataSource{}).
 		Where("tenant_id = ? AND id = ?", tenantId, datasourceId).
 		First(&data).Error
 	return data, err

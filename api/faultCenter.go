@@ -142,6 +142,6 @@ func (faultCenterController faultCenterController) Slo(ctx *gin.Context) {
 	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.FaultCenterService.Slo(r)
+		return services.FaultCenterService.Slo(ctx.Request.Context(), r)
 	})
 }

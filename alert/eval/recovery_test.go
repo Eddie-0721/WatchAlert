@@ -35,6 +35,13 @@ func (r evalDSRepo) GetForTenant(tenant, id string) (models.AlertDataSource, err
 	return ds, nil
 }
 
+func (r evalDSRepo) GetForTenantContext(c context.Context, tenant, id string) (models.AlertDataSource, error) {
+	if err := c.Err(); err != nil {
+		return models.AlertDataSource{}, err
+	}
+	return r.GetForTenant(tenant, id)
+}
+
 type evalRuleRepo struct{ repo.InterRuleRepo }
 
 func (evalRuleRepo) IsEnabled(context.Context, string, string) (bool, error) { return true, nil }

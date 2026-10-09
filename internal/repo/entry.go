@@ -50,14 +50,18 @@ type (
 func NewRepoEntry() InterEntryRepo {
 	dbConfig := config.Application.Database
 	db := client.NewDBClient(client.DBConfig{
-		Type:    dbConfig.Type,
-		Host:    dbConfig.Host,
-		Port:    dbConfig.Port,
-		User:    dbConfig.User,
-		Pass:    dbConfig.Pass,
-		DBName:  dbConfig.DBName,
-		Timeout: dbConfig.Timeout,
-		Path:    dbConfig.Path,
+		Type:                   dbConfig.Type,
+		Host:                   dbConfig.Host,
+		Port:                   dbConfig.Port,
+		User:                   dbConfig.User,
+		Pass:                   dbConfig.Pass,
+		DBName:                 dbConfig.DBName,
+		Timeout:                dbConfig.Timeout,
+		Path:                   dbConfig.Path,
+		MaxOpenConns:           dbConfig.MaxOpenConns,
+		MaxIdleConns:           dbConfig.MaxIdleConns,
+		ConnMaxLifetimeSeconds: dbConfig.ConnMaxLifetimeSeconds,
+		ConnMaxIdleTimeSeconds: dbConfig.ConnMaxIdleTimeSeconds,
 	})
 	g := NewInterGormDBCli(db)
 	return &entryRepo{

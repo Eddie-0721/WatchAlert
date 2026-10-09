@@ -23,7 +23,7 @@ type (
 		Update(r models.AlertNotice) error
 		Delete(tenantId, id string) error
 		AddRecord(r models.NoticeRecord) error
-		ListRecord(tenantId, eventId, severity, status, noticeId, query string, page models.Page) (models.ResponseNoticeRecords, error)
+		ListRecord(context.Context, string, string, string, string, string, string, models.Page) (models.ResponseNoticeRecords, error)
 		CountRecord(r models.CountRecord) (int64, error)
 		CountRecordsByDate(tenantId string, dates []string) ([]models.NoticeRecordCount, error)
 		DeleteRecord() error
@@ -151,35 +151,40 @@ func (nr NoticeRepo) AddRecord(r models.NoticeRecord) error {
 	return nil
 }
 
-func (nr NoticeRepo) ListRecord(tenantId, eventId, severity, status, noticeId, query string, page models.Page) (models.ResponseNoticeRecords, error) {
+func (nr NoticeRepo) ListRecord(requestCtx context.Context, tenantId, eventId, severity, status, noticeId, query string, page models.Page) (models.ResponseNoticeRecords, error) {
+	var err error
+	page, err = historyPage(page, 100)
+	if err != nil {
+		return models.ResponseNoticeRecords{}, err
+	}
 	var (
 		records []models.NoticeRecord
 		count   int64
-		db      = nr.db.Model(&models.NoticeRecord{})
+		db      = nr.db.WithContext(requestCtx).Model(&models.NoticeRecord{})
 	)
 
-	db.Where("tenant_id = ?", tenantId)
+	db = db.Where("tenant_id = ?", tenantId)
 	if eventId != "" {
-		db.Where("event_id = ?", eventId)
+		db = db.Where("event_id = ?", eventId)
 	}
 	if severity != "" {
-		db.Where("severity = ?", severity)
+		db = db.Where("severity = ?", severity)
 	}
 	if status != "" {
-		db.Where("status = ?", status)
+		db = db.Where("status = ?", status)
 	}
 	if noticeId != "" {
-		db.Where("n_obj LIKE ?", "%"+noticeId+"%")
+		db = db.Where("n_obj LIKE ?", "%"+noticeId+"%")
 	}
 	if query != "" {
-		db.Where("rule_name LIKE ? OR alarm_msg LIKE ? OR err_msg LIKE ?", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+		db = db.Where("(rule_name LIKE ? OR alarm_msg LIKE ? OR err_msg LIKE ?)", "%"+query+"%", "%"+query+"%", "%"+query+"%")
 	}
 
 	if err := db.Count(&count).Error; err != nil {
 		return models.ResponseNoticeRecords{}, err
 	}
 
-	err := db.Limit(int(page.Size)).Offset(int((page.Index - 1) * page.Size)).Order("create_at DESC").Find(&records).Error
+	err = db.Limit(int(page.Size)).Offset(int((page.Index - 1) * page.Size)).Order("create_at DESC").Find(&records).Error
 	if err != nil {
 		return models.ResponseNoticeRecords{}, err
 	}
