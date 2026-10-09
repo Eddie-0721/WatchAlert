@@ -20,6 +20,7 @@ type (
 		PushAlertMute(mute models.AlertSilences) error
 		RemoveAlertMute(tenantId, faultCenterId, id string) error
 		GetAlertMutes(tenantId, faultCenterId string) ([]string, error)
+		ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error)
 		WithIdGetMuteFromCache(tenantId, faultCenterId, id string) (*models.AlertSilences, error)
 	}
 )
@@ -47,6 +48,23 @@ func (sc *SilenceCache) RemoveAlertMute(tenantId, faultCenterId, id string) erro
 
 	key := models.BuildAlertMuteCacheKey(tenantId, faultCenterId)
 	return sc.deleteRedisHash(key, id)
+}
+
+// ListAlertMutes reads a request-local snapshot with one Redis command.
+func (sc *SilenceCache) ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error) {
+	mapping, err := sc.getRedisAllHashMap(models.BuildAlertMuteCacheKey(tenantId, faultCenterId))
+	if err != nil {
+		return nil, err
+	}
+	rules := make([]models.AlertSilences, 0, len(mapping))
+	for _, raw := range mapping {
+		var rule models.AlertSilences
+		if err := sonic.UnmarshalString(raw, &rule); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
 }
 
 func (sc *SilenceCache) GetAlertMutes(tenantId, faultCenterId string) ([]string, error) {

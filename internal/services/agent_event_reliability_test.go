@@ -32,6 +32,9 @@ func (e eventFixtureAlerts) GetAllEvents(key models.AlertEventCacheKey) (map[str
 type eventFixtureMutes struct{ cache.SilenceCacheInterface }
 
 func (eventFixtureMutes) GetAlertMutes(string, string) ([]string, error) { return nil, nil }
+func (eventFixtureMutes) ListAlertMutes(string, string) ([]models.AlertSilences, error) {
+	return nil, nil
+}
 
 type eventFixtureCache struct {
 	cache.InterEntryCache

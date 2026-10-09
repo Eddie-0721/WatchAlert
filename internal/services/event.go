@@ -126,6 +126,7 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 		form = curTime.Add(-time.Duration(r.Scope) * 24 * time.Hour).Unix()
 	}
 
+	silenceMatchers := make(map[string]func(map[string]interface{}) bool)
 	for _, event := range allEvents {
 		if r.Fingerprint != "" && event.Fingerprint != r.Fingerprint {
 			continue
@@ -156,7 +157,16 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			continue
 		}
 
-		isSilenced := mute.IsSilence(mute.MuteParams{TenantId: r.TenantId, FaultCenterId: event.FaultCenterId, Labels: event.Labels})
+		matchSilence, loaded := silenceMatchers[event.FaultCenterId]
+		if !loaded {
+			rules, err := e.ctx.Redis.Silence().ListAlertMutes(r.TenantId, event.FaultCenterId)
+			if err != nil {
+				return nil, fmt.Errorf("读取静默状态失败: %w", err)
+			}
+			matchSilence = mute.CompileSnapshot(rules, curTime.Unix())
+			silenceMatchers[event.FaultCenterId] = matchSilence
+		}
+		isSilenced := matchSilence(event.Labels)
 		view := buildCurrentEventResponse(event, isSilenced)
 		view.FaultCenterName = centerNames[event.FaultCenterId]
 		view.Scope = buildAlertScope(event.Labels)

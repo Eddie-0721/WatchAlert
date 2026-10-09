@@ -25,6 +25,7 @@ type (
 		AddRecord(r models.NoticeRecord) error
 		ListRecord(tenantId, eventId, severity, status, noticeId, query string, page models.Page) (models.ResponseNoticeRecords, error)
 		CountRecord(r models.CountRecord) (int64, error)
+		CountRecordsByDate(tenantId string, dates []string) ([]models.NoticeRecordCount, error)
 		DeleteRecord() error
 	}
 )
@@ -191,6 +192,15 @@ func (nr NoticeRepo) ListRecord(tenantId, eventId, severity, status, noticeId, q
 			Total: count,
 		},
 	}, nil
+}
+
+func (nr NoticeRepo) CountRecordsByDate(tenantId string, dates []string) ([]models.NoticeRecordCount, error) {
+	var counts []models.NoticeRecordCount
+	err := nr.db.Model(&models.NoticeRecord{}).
+		Select("date, severity, COUNT(*) AS count").
+		Where("tenant_id = ? AND date IN ? AND severity IN ?", tenantId, dates, []string{"P0", "P1", "P2"}).
+		Group("date, severity").Scan(&counts).Error
+	return counts, err
 }
 
 func (nr NoticeRepo) CountRecord(r models.CountRecord) (int64, error) {

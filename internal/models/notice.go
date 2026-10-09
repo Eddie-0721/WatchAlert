@@ -74,6 +74,12 @@ type CountRecord struct {
 	Severity string `json:"severity"` // 告警等级
 }
 
+type NoticeRecordCount struct {
+	Date     string
+	Severity string
+	Count    int64
+}
+
 type ResponseNoticeRecords struct {
 	List []NoticeRecord `json:"list"`
 	Page

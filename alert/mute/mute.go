@@ -63,6 +63,29 @@ func IsSilence(mute MuteParams) bool {
 	return false
 }
 
+// CompileSnapshot reuses compiled matchers only within a single read operation.
+// Each new request observes updated rules and evaluates their time boundaries again.
+func CompileSnapshot(rules []models.AlertSilences, now int64) func(map[string]interface{}) bool {
+	var matches []func(map[string]interface{}) bool
+	for _, rule := range rules {
+		if rule.Status != 1 || now < rule.StartsAt || now >= rule.EndsAt {
+			continue
+		}
+		match, err := models.CompileSilenceMatchers(rule.Labels)
+		if err == nil {
+			matches = append(matches, match)
+		}
+	}
+	return func(labels map[string]interface{}) bool {
+		for _, match := range matches {
+			if match(labels) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 func evalCondition(metrics map[string]interface{}, muteLabels []models.SilenceLabel) bool {
 	match, err := models.CompileSilenceMatchers(muteLabels)
 	return err == nil && match(metrics)

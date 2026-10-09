@@ -9,8 +9,6 @@ import (
 	"watchAlert/internal/types"
 	mediums "watchAlert/pkg/medium"
 	"watchAlert/pkg/tools"
-
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
 type noticeService struct {
@@ -146,28 +144,22 @@ func (n noticeService) GetRecordMetric(req interface{}) (interface{}, interface{
 		curTime.Format(layout),
 	}
 
-	var severitys = []string{"P0", "P1", "P2"}
+	rows, err := n.ctx.DB.Notice().CountRecordsByDate(r.TenantId, timeList)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]map[string]int64, len(timeList))
+	for _, row := range rows {
+		if counts[row.Date] == nil {
+			counts[row.Date] = make(map[string]int64)
+		}
+		counts[row.Date][row.Severity] = row.Count
+	}
 	var P0, P1, P2 []int64
 	for _, t := range timeList {
-		for _, s := range severitys {
-			count, err := n.ctx.DB.Notice().CountRecord(models.CountRecord{
-				Date:     t,
-				TenantId: r.TenantId,
-				Severity: s,
-			})
-			if err != nil {
-				logc.Error(n.ctx.Ctx, err.Error())
-			}
-			switch s {
-			case "P0":
-				P0 = append(P0, count)
-			case "P1":
-				P1 = append(P1, count)
-			case "P2":
-				P2 = append(P2, count)
-			}
-
-		}
+		P0 = append(P0, counts[t]["P0"])
+		P1 = append(P1, counts[t]["P1"])
+		P2 = append(P2, counts[t]["P2"])
 	}
 
 	return ResponseRecordMetric{

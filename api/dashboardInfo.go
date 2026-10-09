@@ -35,86 +35,54 @@ func (dashboardInfoController dashboardInfoController) GetDashboardInfo(context 
 	faultCenter, err := c.DB.FaultCenter().Get(tidString, context.Query("faultCenterId"), "")
 	if err != nil {
 		logc.Error(c.Ctx, err.Error())
+		response.Fail(context, "读取故障中心失败", "failed")
 		return
 	}
 
-	response.Success(context, types.ResponseDashboardInfo{
-		CountAlertRules:   getRuleNumber(c, tidString),
-		FaultCenterNumber: getFaultCenterNumber(c, tidString),
-		UserNumber:        getUserNumber(c),
-		CurAlertList:      getAlertList(c, faultCenter),
-		AlarmDistribution: types.AlarmDistribution{
-			P0: getAlarmDistribution(c, faultCenter, "P0"),
-			P1: getAlarmDistribution(c, faultCenter, "P1"),
-			P2: getAlarmDistribution(c, faultCenter, "P2"),
-		},
-	}, "success")
+	data, err := loadDashboardInfo(c, tidString, faultCenter)
+	if err != nil {
+		logc.Error(c.Ctx, err.Error())
+		response.Fail(context, "读取告警态势失败", "failed")
+		return
+	}
+	response.Success(context, data, "success")
 }
 
-func getRuleNumber(ctx *ctx.Context, tenantId string) int64 {
-	list, _, err := ctx.DB.Rule().List(tenantId, "", "", "", "", models.Page{
-		Index: 0,
-		Size:  10000,
-	})
-	if err != nil {
-		return 0
+func loadDashboardInfo(c *ctx.Context, tenantId string, faultCenter models.FaultCenter) (types.ResponseDashboardInfo, error) {
+	var data types.ResponseDashboardInfo
+	db := c.DB.DB()
+	if err := db.Model(&models.AlertRule{}).Where("tenant_id = ?", tenantId).Count(&data.CountAlertRules).Error; err != nil {
+		return data, err
 	}
-	return int64(len(list))
-}
-
-// getFaultCenterNumber 获取故障中心总数
-func getFaultCenterNumber(ctx *ctx.Context, tenantId string) int64 {
-	list, err := ctx.DB.FaultCenter().List(tenantId, "")
-	if err != nil {
-		logc.Error(ctx.Ctx, err.Error())
-		return 0
+	if err := db.Model(&models.FaultCenter{}).Where("tenant_id = ?", tenantId).Count(&data.FaultCenterNumber).Error; err != nil {
+		return data, err
 	}
-	return int64(len(list))
-}
-
-// getUserNumber 获取用户总数
-func getUserNumber(ctx *ctx.Context) int64 {
-	list, err := ctx.DB.User().List("", "")
-	if err != nil {
-		logc.Error(ctx.Ctx, err.Error())
-		return 0
+	// Preserve the existing platform-wide user-count meaning.
+	if err := db.Model(&models.Member{}).Count(&data.UserNumber).Error; err != nil {
+		return data, err
 	}
-	return int64(len(list))
-}
-
-// getAlertList 获取当前告警 annotations 列表
-
-func getAlertList(ctx *ctx.Context, faultCenter models.FaultCenter) []types.AlertList {
-	events, err := ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(faultCenter.TenantId, faultCenter.ID))
+	events, err := c.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(tenantId, faultCenter.ID))
 	if err != nil {
-		return nil
+		return data, err
 	}
-
-	var list []types.AlertList
-	var uniq = make(map[string]struct{})
+	uniq := make(map[string]struct{})
 	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		switch event.Severity {
+		case "P0":
+			data.AlarmDistribution.P0++
+		case "P1":
+			data.AlarmDistribution.P1++
+		case "P2":
+			data.AlarmDistribution.P2++
+		}
 		if _, ok := uniq[event.RuleName]; ok {
 			continue
 		}
-
-		list = append(list, types.AlertList{Severity: event.Severity, RuleName: event.RuleName, FaultCenterId: event.FaultCenterId, TiggerTime: event.FirstTriggerTime})
+		data.CurAlertList = append(data.CurAlertList, types.AlertList{Severity: event.Severity, RuleName: event.RuleName, FaultCenterId: event.FaultCenterId, TiggerTime: event.FirstTriggerTime})
 		uniq[event.RuleName] = struct{}{}
 	}
-	return list
-}
-
-// getAlarmDistribution 获取告警分布
-func getAlarmDistribution(ctx *ctx.Context, faultCenter models.FaultCenter, severity string) int64 {
-	events, err := ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(faultCenter.TenantId, faultCenter.ID))
-	if err != nil {
-		return 0
-	}
-
-	var number int64
-	for _, event := range events {
-		if event.Severity == severity {
-			number++
-		}
-	}
-	return number
+	return data, nil
 }
