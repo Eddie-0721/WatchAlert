@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func pageService(t *testing.T) (*agentService, *gorm.DB) {
+func pageService(t testing.TB) (*agentService, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

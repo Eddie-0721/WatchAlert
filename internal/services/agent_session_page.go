@@ -65,16 +65,21 @@ func (a *agentService) GetSession(ctx context.Context, tenantID, userID string, 
 		result.Messages[l], result.Messages[r] = result.Messages[r], result.Messages[l]
 	}
 	// Only load current statuses for action IDs actually referenced on this page.
-	evidence := make([][]map[string]interface{}, len(result.Messages))
+	// Keep nested evidence opaque: decoding numbers through interface{} loses
+	// precision and needlessly allocates every query result/preview field.
+	evidence := make([][]map[string]json.RawMessage, len(result.Messages))
 	ids := []string{}
 	seen := map[string]bool{}
 	for i, message := range result.Messages {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if json.Unmarshal([]byte(message.Evidence), &evidence[i]) != nil {
 			evidence[i] = nil
 			continue
 		}
 		for _, item := range evidence[i] {
-			if id, ok := item["actionId"].(string); ok && id != "" && !seen[id] {
+			if id := agentEvidenceString(item["actionId"]); id != "" && !seen[id] {
 				ids = append(ids, id)
 				seen[id] = true
 			}
@@ -100,16 +105,39 @@ func (a *agentService) GetSession(ctx context.Context, tenantID, userID string, 
 		}
 	}
 	for i, items := range evidence {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if items == nil {
 			continue
 		}
+		changed := false
 		for _, item := range items {
-			if id, ok := item["actionId"].(string); ok && statuses[id] != "" {
-				item["status"] = statuses[id]
+			if status := statuses[agentEvidenceString(item["actionId"])]; status != "" && agentEvidenceString(item["status"]) != status {
+				encoded, err := json.Marshal(status)
+				if err != nil {
+					return result, err
+				}
+				item["status"] = encoded
+				changed = true
 			}
 		}
-		encoded, _ := json.Marshal(items)
-		result.Messages[i].Evidence = string(encoded)
+		// Preserve the original bytes when there is no authoritative status change.
+		if changed {
+			encoded, err := json.Marshal(items)
+			if err != nil {
+				return result, err
+			}
+			result.Messages[i].Evidence = string(encoded)
+		}
 	}
-	return result, nil
+	return result, ctx.Err()
+}
+
+func agentEvidenceString(raw json.RawMessage) string {
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return value
 }
