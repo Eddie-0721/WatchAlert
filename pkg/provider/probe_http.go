@@ -95,6 +95,10 @@ func (h HTTPer) executeHTTPProbe(option EndpointOption) HTTPResult {
 			Proxy: http.ProxyFromEnvironment,
 		},
 	}
+	// Each probe intentionally owns a fresh transport so connection setup stays
+	// part of its latency. Closing the body alone retains idle sockets for empty
+	// responses and redirects; release the private pool on every return path.
+	defer client.CloseIdleConnections()
 
 	// 创建请求
 	var req *http.Request
