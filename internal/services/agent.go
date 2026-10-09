@@ -1,13 +1,11 @@
 package services
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -437,7 +435,7 @@ func callAgentService(ctx context.Context, payload types.AgentRunRequest) (types
 		return result, fmt.Errorf("调用 Copilot Agent 服务失败: %w", err)
 	}
 	defer resp.Body.Close()
-	content, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	content, err := readAgentResponseBody(resp.Body)
 	if err != nil {
 		return result, err
 	}
@@ -475,58 +473,14 @@ func callAgentServiceStream(ctx context.Context, payload types.AgentRunRequest, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		content, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		content, err := readAgentResponseBody(resp.Body)
+		if err != nil {
+			return result, err
+		}
 		return result, fmt.Errorf("Copilot Agent 流服务返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(content)))
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	eventType, data := "message", ""
-	dispatch := func() error {
-		if data == "" {
-			return nil
-		}
-		var event types.AgentStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return fmt.Errorf("解析 Copilot 流事件失败: %w", err)
-		}
-		event.Type = eventType
-		switch eventType {
-		case "delta", "status":
-			emit(event)
-		case "done":
-			result.Content, result.Evidence = event.Content, event.Evidence
-			emit(event)
-		case "error":
-			return fmt.Errorf("Copilot Agent 运行失败: %s", event.Message)
-		}
-		return nil
-	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if err := dispatch(); err != nil {
-				return result, err
-			}
-			eventType, data = "message", ""
-			continue
-		}
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			data += strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return result, err
-	}
-	if err := dispatch(); err != nil {
-		return result, err
-	}
-	if result.Content == "" {
-		return result, fmt.Errorf("Copilot Agent 流服务提前结束")
-	}
-	return result, nil
+	return readAgentEventStream(requestCtx, resp.Body, emit)
 }
 
 func defaultReadTools() []string {
