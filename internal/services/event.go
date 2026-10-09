@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -87,15 +86,15 @@ func (e eventService) DeleteAlertEvent(req interface{}) (interface{}, interface{
 
 func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{}) {
 	r, ok := req.(*types.RequestAlertCurEventQuery)
-	if !ok {
+	if !ok || r == nil {
 		return nil, fmt.Errorf("invalid request type: expected *models.AlertCurEventQuery")
 	}
 
-	var (
-		allEvents      []models.AlertCurEvent
-		filteredEvents []types.ResponseAlertCurEvent
-		curTime        = time.Now()
-	)
+	selector, offset, err := newCurrentEventPage(r.Page, r.SortOrder)
+	if err != nil {
+		return nil, err
+	}
+	curTime := time.Now()
 
 	centers, err := e.ctx.DB.FaultCenter().List(r.TenantId, "")
 	if err != nil {
@@ -104,20 +103,6 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	centerNames := make(map[string]string, len(centers))
 	for _, center := range centers {
 		centerNames[center.ID] = center.Name
-		if r.FaultCenterId != "" && center.ID != r.FaultCenterId {
-			continue
-		}
-
-		events, err := e.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(r.TenantId, center.ID))
-		if err != nil {
-			return nil, err
-		}
-		for _, alert := range events {
-			if alert == nil || alert.TenantId != r.TenantId {
-				continue
-			}
-			allEvents = append(allEvents, *alert)
-		}
 	}
 
 	var form int64
@@ -128,103 +113,88 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	}
 
 	silenceMatchers := make(map[string]func(map[string]interface{}) bool)
-	for _, event := range allEvents {
-		if r.Fingerprint != "" && event.Fingerprint != r.Fingerprint {
-			continue
-		}
-		if r.RuleId != "" && event.RuleId != r.RuleId {
-			continue
-		}
-		if !eventWithinAgentScope(event, r) {
-			continue
-		}
-		if r.DatasourceType != "" && event.DatasourceType != r.DatasourceType {
-			continue
-		}
-
-		if r.Severity != "" && event.Severity != r.Severity {
-			continue
-		}
-
-		if r.Scope > 0 && (event.FirstTriggerTime < form || event.FirstTriggerTime > to) {
-			continue
-		}
-
-		if r.FaultCenterId != "" && event.FaultCenterId != r.FaultCenterId {
-			continue
-		}
-
-		if !matchQuery(event, r.Query) {
-			continue
-		}
-
-		matchSilence, loaded := silenceMatchers[event.FaultCenterId]
-		if !loaded {
-			rules, err := e.ctx.Redis.Silence().ListAlertMutes(r.TenantId, event.FaultCenterId)
-			if err != nil {
-				return nil, fmt.Errorf("读取静默状态失败: %w", err)
-			}
-			matchSilence, err = mute.CompileSnapshotChecked(rules, curTime.Unix())
-			if err != nil {
-				return nil, fmt.Errorf("读取静默状态失败: %w", err)
-			}
-			silenceMatchers[event.FaultCenterId] = matchSilence
-		}
-		isSilenced := matchSilence(event.Labels)
-		view := buildCurrentEventResponse(event, isSilenced)
-		view.FaultCenterName = centerNames[event.FaultCenterId]
-		view.Scope = buildAlertScope(event.Labels)
-		if !matchCurrentEvent(view, r) {
-			continue
-		}
-
-		filteredEvents = append(filteredEvents, view)
-	}
-
-	sort.Slice(filteredEvents, func(i, j int) bool {
-		a, b := &filteredEvents[i], &filteredEvents[j]
-
-		// 按持续时间降序
-		durA := a.LastEvalTime - a.FirstTriggerTime
-		durB := b.LastEvalTime - b.FirstTriggerTime
-		switch r.SortOrder {
-		case models.SortOrderASC:
-			if durA != durB {
-				return durA < durB // 升序
-			}
-		case models.SortOrderDesc:
-			if durA != durB {
-				return durA > durB // 降序
-			}
-		default:
-			if a.FirstTriggerTime != b.FirstTriggerTime {
-				return a.FirstTriggerTime > b.FirstTriggerTime
-			}
-		}
-
-		// 默认按指纹升序
-		return a.Fingerprint < b.Fingerprint
-	})
-
-	var summary *types.AlertEventSummary
+	var summary *eventSummaryAccumulator
 	if r.IncludeSummary {
-		summary = summarizeAlertEvents(filteredEvents)
+		summary = newEventSummaryAccumulator()
 	}
-	if r.Queue != "" {
-		queued := make([]types.ResponseAlertCurEvent, 0)
-		for _, event := range filteredEvents {
-			if alertInQueue(event, r.Queue) {
-				queued = append(queued, event)
-			}
+	var total int64
+	for _, center := range centers {
+		if r.FaultCenterId != "" && center.ID != r.FaultCenterId {
+			continue
 		}
-		filteredEvents = queued
+		events, err := e.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(r.TenantId, center.ID))
+		if err != nil {
+			return nil, err
+		}
+		for _, cached := range events {
+			if cached == nil || cached.TenantId != r.TenantId {
+				continue
+			}
+			event := *cached
+			if r.Fingerprint != "" && event.Fingerprint != r.Fingerprint {
+				continue
+			}
+			if r.RuleId != "" && event.RuleId != r.RuleId {
+				continue
+			}
+			if !eventWithinAgentScope(event, r) {
+				continue
+			}
+			if r.DatasourceType != "" && event.DatasourceType != r.DatasourceType {
+				continue
+			}
+
+			if r.Severity != "" && event.Severity != r.Severity {
+				continue
+			}
+
+			if r.Scope > 0 && (event.FirstTriggerTime < form || event.FirstTriggerTime > to) {
+				continue
+			}
+
+			if r.FaultCenterId != "" && event.FaultCenterId != r.FaultCenterId {
+				continue
+			}
+
+			if !matchQuery(event, r.Query) {
+				continue
+			}
+
+			matchSilence, loaded := silenceMatchers[event.FaultCenterId]
+			if !loaded {
+				rules, err := e.ctx.Redis.Silence().ListAlertMutes(r.TenantId, event.FaultCenterId)
+				if err != nil {
+					return nil, fmt.Errorf("读取静默状态失败: %w", err)
+				}
+				matchSilence, err = mute.CompileSnapshotChecked(rules, curTime.Unix())
+				if err != nil {
+					return nil, fmt.Errorf("读取静默状态失败: %w", err)
+				}
+				silenceMatchers[event.FaultCenterId] = matchSilence
+			}
+			isSilenced := matchSilence(event.Labels)
+			view := buildCurrentEventResponse(event, isSilenced)
+			view.FaultCenterName = centerNames[event.FaultCenterId]
+			view.Scope = buildAlertScope(event.Labels)
+			if !matchCurrentEvent(view, r) {
+				continue
+			}
+
+			if summary != nil {
+				summary.add(&view)
+			}
+			if r.Queue != "" && !alertInQueue(view, r.Queue) {
+				continue
+			}
+			total++
+			selector.offer(view)
+		}
 	}
-	paginatedList := pageSlice(filteredEvents, int(r.Page.Index), int(r.Page.Size))
 	return types.ResponseAlertCurEventList{
-		List:    paginatedList,
-		Summary: summary,
+		List:    selector.page(offset),
+		Summary: summary.finish(),
 		Page: models.Page{
-			Total: int64(len(filteredEvents)),
+			Total: total,
 			Index: r.Page.Index,
 			Size:  r.Page.Size,
 		},
@@ -310,15 +280,44 @@ func matchesScope(value, query string) bool {
 }
 
 func buildAlertScope(labels map[string]interface{}) types.AlertScope {
-	return types.AlertScope{
-		Environment: labelValue(labels, "environment", "env", "stage", "deployment_environment"),
-		Service:     labelValue(labels, "service", "app", "application", "job"),
-		Cluster:     labelValue(labels, "cluster", "cluster_name", "kubernetes_cluster"),
-		Namespace:   labelValue(labels, "namespace", "kubernetes_namespace", "k8s_namespace"),
-		Resource:    labelValue(labels, "resource_name", "resource", "pod", "node", "host", "instance"),
-		Instance:    labelValue(labels, "instance", "pod", "node", "host", "endpoint"),
-		Owner:       labelValue(labels, "owner", "team", "service_owner"),
+	// Only use direct lookups when case-insensitive matching is provably exact.
+	// Mixed-case/Unicode keys keep the legacy EqualFold and alias precedence.
+	direct := true
+	for key := range labels {
+		for i := 0; i < len(key); i++ {
+			if key[i] >= 128 || (key[i] >= 'A' && key[i] <= 'Z') {
+				direct = false
+				break
+			}
+		}
+		if !direct {
+			break
+		}
 	}
+	return types.AlertScope{
+		Environment: scopeLabelValue(labels, direct, "environment", "env", "stage", "deployment_environment"),
+		Service:     scopeLabelValue(labels, direct, "service", "app", "application", "job"),
+		Cluster:     scopeLabelValue(labels, direct, "cluster", "cluster_name", "kubernetes_cluster"),
+		Namespace:   scopeLabelValue(labels, direct, "namespace", "kubernetes_namespace", "k8s_namespace"),
+		Resource:    scopeLabelValue(labels, direct, "resource_name", "resource", "pod", "node", "host", "instance"),
+		Instance:    scopeLabelValue(labels, direct, "instance", "pod", "node", "host", "endpoint"),
+		Owner:       scopeLabelValue(labels, direct, "owner", "team", "service_owner"),
+	}
+}
+
+func scopeLabelValue(labels map[string]interface{}, direct bool, aliases ...string) string {
+	if !direct {
+		return labelValue(labels, aliases...)
+	}
+	for _, alias := range aliases {
+		if value, found := labels[alias]; found {
+			if text, ok := value.(string); ok {
+				return strings.TrimSpace(text)
+			}
+			return strings.TrimSpace(fmt.Sprint(value))
+		}
+	}
+	return ""
 }
 
 func labelValue(labels map[string]interface{}, aliases ...string) string {
@@ -328,6 +327,9 @@ func labelValue(labels map[string]interface{}, aliases ...string) string {
 	for _, alias := range aliases {
 		for key, value := range labels {
 			if strings.EqualFold(key, alias) {
+				if text, ok := value.(string); ok {
+					return strings.TrimSpace(text)
+				}
 				return strings.TrimSpace(fmt.Sprint(value))
 			}
 		}

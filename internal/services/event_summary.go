@@ -29,30 +29,56 @@ func alertInQueue(event types.ResponseAlertCurEvent, queue string) bool {
 // Summaries are calculated before pagination and queue selection, within the
 // same tenant and search filters as the list. Agent tools do not request them.
 func summarizeAlertEvents(events []types.ResponseAlertCurEvent) *types.AlertEventSummary {
-	result := &types.AlertEventSummary{Queues: map[string]int{"all": 0, "attention": 0, "processing": 0, "suppressed": 0, "observing": 0}, Environments: []string{}, Services: []string{}}
-	environments, services := map[string]bool{}, map[string]bool{}
-	for _, event := range events {
-		for _, queue := range []string{"all", "attention", "processing", "suppressed", "observing"} {
-			if alertInQueue(event, queue) {
-				result.Queues[queue]++
-			}
-		}
-		if event.Scope.Environment != "" {
-			environments[event.Scope.Environment] = true
-		}
-		if event.Scope.Service != "" {
-			services[event.Scope.Service] = true
-		}
+	result := newEventSummaryAccumulator()
+	for i := range events {
+		result.add(&events[i])
 	}
-	for value := range environments {
-		result.Environments = append(result.Environments, value)
+	return result.finish()
+}
+
+type eventSummaryAccumulator struct {
+	result                 *types.AlertEventSummary
+	environments, services map[string]bool
+}
+
+func newEventSummaryAccumulator() *eventSummaryAccumulator {
+	return &eventSummaryAccumulator{result: &types.AlertEventSummary{Queues: map[string]int{"all": 0, "attention": 0, "processing": 0, "suppressed": 0, "observing": 0}, Environments: []string{}, Services: []string{}}, environments: map[string]bool{}, services: map[string]bool{}}
+}
+
+func (s *eventSummaryAccumulator) add(event *types.ResponseAlertCurEvent) {
+	if event.LifecycleStatus != models.StateRecovered {
+		s.result.Queues["all"]++
+		queue := "attention"
+		if event.Silenced {
+			queue = "suppressed"
+		} else if event.LifecycleStatus == models.StatePreAlert {
+			queue = "observing"
+		} else if event.Acknowledged {
+			queue = "processing"
+		}
+		s.result.Queues[queue]++
 	}
-	for value := range services {
-		result.Services = append(result.Services, value)
+	if event.Scope.Environment != "" {
+		s.environments[event.Scope.Environment] = true
 	}
-	sort.Strings(result.Environments)
-	sort.Strings(result.Services)
-	return result
+	if event.Scope.Service != "" {
+		s.services[event.Scope.Service] = true
+	}
+}
+
+func (s *eventSummaryAccumulator) finish() *types.AlertEventSummary {
+	if s == nil {
+		return nil
+	}
+	for value := range s.environments {
+		s.result.Environments = append(s.result.Environments, value)
+	}
+	for value := range s.services {
+		s.result.Services = append(s.result.Services, value)
+	}
+	sort.Strings(s.result.Environments)
+	sort.Strings(s.result.Services)
+	return s.result
 }
 
 func eventWithinAgentScope(event models.AlertCurEvent, query *types.RequestAlertCurEventQuery) bool {
