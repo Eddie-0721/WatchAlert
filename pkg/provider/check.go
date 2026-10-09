@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 	"watchAlert/internal/models"
 
 	"github.com/zeromicro/go-zero/core/logc"
@@ -71,6 +72,10 @@ func CheckDatasourceHealth(datasource models.AlertDataSource) (bool, error) {
 		return false, err
 	}
 
+	// Temporary check clients must not leave SQL pools/background workers alive.
+	if closer, ok := client.(io.Closer); ok {
+		defer closer.Close()
+	}
 	// 执行健康检查
 	healthy, err := client.Check()
 	if err != nil || !healthy {

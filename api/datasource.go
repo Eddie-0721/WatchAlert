@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -321,7 +322,7 @@ func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.
 
 		switch r.Type {
 		case provider.VictoriaLogsDsProviderName:
-			client, err = provider.NewVictoriaLogsClient(ctx, datasource)
+			client, err = provider.NewVictoriaLogsClient(ctx.Request.Context(), datasource)
 			if err != nil {
 				return nil, err
 			}
@@ -332,7 +333,7 @@ func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.
 				},
 			}
 		case provider.ElasticSearchDsProviderName:
-			client, err = provider.NewElasticSearchClient(ctx, datasource)
+			client, err = provider.NewElasticSearchClient(ctx.Request.Context(), datasource)
 			if err != nil {
 				return nil, err
 			}
@@ -345,7 +346,7 @@ func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.
 				},
 			}
 		case provider.ClickHouseDsProviderName:
-			client, err = provider.NewClickHouseClient(ctx, datasource)
+			client, err = provider.NewClickHouseClient(ctx.Request.Context(), datasource)
 			if err != nil {
 				return nil, err
 			}
@@ -359,6 +360,9 @@ func (datasourceController datasourceController) SearchViewLogsContent(ctx *gin.
 
 		if client == nil {
 			return nil, fmt.Errorf("不支持该数据源的日志预览")
+		}
+		if closer, ok := client.(io.Closer); ok {
+			defer closer.Close()
 		}
 		query, _, err := client.Query(options)
 		if err != nil {

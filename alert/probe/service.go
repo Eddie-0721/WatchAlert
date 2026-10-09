@@ -125,9 +125,11 @@ func (s *ProbeService) executeProbing(rule models.ProbeRule) {
 
 	// 写入指标到数据源
 	if len(metrics) > 0 && rule.DatasourceId != "" {
-		cli, err := pools.GetClient(rule.DatasourceId)
+		cli, release, err := pools.AcquireClient(rule.DatasourceId)
+		defer release()
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "获取数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.DatasourceId, err)
+			return
 		}
 
 		err = cli.(provider.PrometheusProvider).Write(s.ctx.Ctx, metrics, nil)

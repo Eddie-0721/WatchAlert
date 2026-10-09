@@ -228,7 +228,7 @@ func (t *AlertRule) processSingleDatasource(requestCtx context.Context, dsId str
 	// These providers validate HTTP/decoding failures in the actual query.
 	// Other providers retain preflight until their error semantics are audited.
 	switch instance.Type {
-	case DatasourceTypePrometheus, provider.LokiDsProviderName, provider.VictoriaLogsDsProviderName, provider.JaegerDsProviderName:
+	case DatasourceTypePrometheus, provider.LokiDsProviderName, provider.VictoriaLogsDsProviderName, provider.JaegerDsProviderName, provider.ElasticSearchDsProviderName, provider.ClickHouseDsProviderName:
 	default:
 		if ok, _ := provider.CheckDatasourceHealth(instance); !ok {
 			logc.Errorf(t.ctx.Ctx, "Datasource %s is unhealthy", dsId)

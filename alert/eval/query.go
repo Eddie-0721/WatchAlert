@@ -29,7 +29,8 @@ func metrics(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasou
 		truncated             bool
 	)
 
-	cli, err := pools.GetClient(datasourceId)
+	cli, release, err := pools.AcquireClient(datasourceId)
+	defer release()
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 		return failedEvaluation("client_unavailable")
@@ -230,7 +231,8 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 	)
 
 	pools := ctx.Redis.ProviderPools()
-	cli, err := pools.GetClient(datasourceId)
+	cli, release, err := pools.AcquireClient(datasourceId)
+	defer release()
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 		return failedEvaluation("client_unavailable")
@@ -294,7 +296,12 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 			ExpectedValue: value,
 		}
 	case provider.ElasticSearchDsProviderName:
+		if rule.ElasticSearchConfig.EsQueryType == models.EsQueryTypeField && (rule.ElasticSearchConfig.Scope <= 0 || rule.ElasticSearchConfig.Scope > int64((1<<63-1)/time.Minute)) {
+			return failedEvaluation("invalid_query_scope")
+		}
 		queryOptions := provider.LogQueryOptions{
+			StartAt: curAt.Add(-time.Duration(rule.ElasticSearchConfig.Scope) * time.Minute).Format(time.RFC3339Nano),
+			EndAt:   curAt.Format(time.RFC3339Nano),
 			ElasticSearch: provider.Elasticsearch{
 				Index:                rule.ElasticSearchConfig.Index,
 				QueryFilter:          rule.ElasticSearchConfig.Filter,
@@ -304,7 +311,7 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 				RawJson:              rule.ElasticSearchConfig.RawJson,
 			},
 		}
-		log, count, err = cli.(provider.ElasticSearchDsProvider).Query(queryOptions)
+		log, count, err = cli.(provider.ElasticSearchDsProvider).QueryContext(requestCtx, queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "ElasticSearch查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 索引: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.ElasticSearchConfig.Index, err)
 			return failedEvaluation("query_failed")
@@ -356,7 +363,7 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 				Query: rule.ClickHouseConfig.LogQL,
 			},
 		}
-		log, count, err = cli.(provider.ClickHouseProvider).Query(queryOptions)
+		log, count, err = cli.(provider.ClickHouseProvider).QueryContext(requestCtx, queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "ClickHouse查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.ClickHouseConfig.LogQL, err)
 			return failedEvaluation("query_failed")
@@ -449,7 +456,8 @@ func traces(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasour
 		curAt := time.Now().UTC()
 		startsAt := tools.ParserDuration(curAt, rule.JaegerConfig.Scope, "m")
 
-		cli, err := pools.GetClient(datasourceId)
+		cli, release, err := pools.AcquireClient(datasourceId)
+		defer release()
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "获取Jaeger数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 			return failedEvaluation("client_unavailable")
@@ -503,7 +511,8 @@ func traces(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasour
 func cloudWatch(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var externalLabels map[string]interface{}
 	pools := ctx.Redis.ProviderPools()
-	cfg, err := pools.GetClient(datasourceId)
+	cfg, release, err := pools.AcquireClient(datasourceId)
+	defer release()
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取CloudWatch数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 		return failedEvaluation("client_unavailable")
@@ -578,7 +587,8 @@ func kubernetesEvent(requestCtx context.Context, ctx *ctx.Context, datasourceId,
 	}
 
 	pools := ctx.Redis.ProviderPools()
-	cli, err := pools.GetClient(datasourceId)
+	cli, release, err := pools.AcquireClient(datasourceId)
+	defer release()
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "获取Kubernetes数据源客户端失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, err)
 		return failedEvaluation("client_unavailable")

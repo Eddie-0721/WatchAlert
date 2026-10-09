@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/tools"
 
@@ -18,13 +20,29 @@ type ElasticSearchDsProvider struct {
 	Username       string
 	Password       string
 	ExternalLabels map[string]interface{}
+	Ctx            context.Context
 }
 
+var elasticTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 10
+	return t
+}()
+
 func NewElasticSearchClient(ctx context.Context, ds models.AlertDataSource) (LogsFactoryProvider, error) {
+	timeout := ds.HTTP.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
 	client, err := elastic.NewClient(
 		elastic.SetURL(ds.HTTP.URL),
 		elastic.SetBasicAuth(ds.Auth.User, ds.Auth.Pass),
 		elastic.SetSniff(false),
+		// Queries and explicit Check report connection failures; do not create
+		// a periodic health goroutine per client or an extra startup request.
+		elastic.SetHealthcheck(false),
+		elastic.SetHttpClient(&http.Client{Transport: elasticTransport, Timeout: time.Duration(timeout) * time.Second}),
 	)
 	if err != nil {
 		return ElasticSearchDsProvider{}, err
@@ -36,14 +54,19 @@ func NewElasticSearchClient(ctx context.Context, ds models.AlertDataSource) (Log
 		Username:       ds.Auth.User,
 		Password:       ds.Auth.Pass,
 		ExternalLabels: ds.Labels,
+		Ctx:            ctx,
 	}, nil
 }
 
-type esQueryResponse struct {
-	Source map[string]interface{} `json:"_source"`
+func (e ElasticSearchDsProvider) Query(options LogQueryOptions) (Logs, int, error) {
+	requestCtx := e.Ctx
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+	return e.QueryContext(requestCtx, options)
 }
 
-func (e ElasticSearchDsProvider) Query(options LogQueryOptions) (Logs, int, error) {
+func (e ElasticSearchDsProvider) QueryContext(requestCtx context.Context, options LogQueryOptions) (Logs, int, error) {
 	indexName := options.ElasticSearch.GetIndexName()
 	var query elastic.Query
 
@@ -85,7 +108,12 @@ func (e ElasticSearchDsProvider) Query(options LogQueryOptions) (Logs, int, erro
 				return Logs{}, 0, errors.New("undefined QueryFilterCondition")
 			}
 		}
-		conditionQuery.Must(elastic.NewRangeQuery("@timestamp").Gte(options.StartAt.(string)).Lte(options.EndAt.(string)))
+		start, startOK := options.StartAt.(string)
+		end, endOK := options.EndAt.(string)
+		if !startOK || !endOK || start == "" || end == "" {
+			return Logs{}, 0, fmt.Errorf("Elasticsearch field query requires a time range")
+		}
+		conditionQuery.Must(elastic.NewRangeQuery("@timestamp").Gte(start).Lte(end))
 		query = conditionQuery
 	default:
 		return Logs{}, 0, fmt.Errorf("undefined QueryType, type: %s", options.ElasticSearch.QueryType)
@@ -94,33 +122,36 @@ func (e ElasticSearchDsProvider) Query(options LogQueryOptions) (Logs, int, erro
 	res, err := e.Cli.Search().
 		Index(indexName).
 		Query(query).
-		Pretty(true).
-		Do(context.Background())
+		MaxResponseSize(maxQueryBodyBytes).
+		Do(requestCtx)
 	if err != nil {
 		return Logs{}, 0, err
 	}
-
-	var response []esQueryResponse
-	marshalHits, err := sonic.Marshal(res.Hits.Hits)
-	if err != nil {
-		return Logs{}, 0, err
-	}
-	err = sonic.Unmarshal(marshalHits, &response)
-	if err != nil {
-		return Logs{}, 0, err
+	if res == nil || res.Hits == nil || res.TimedOut || res.TerminatedEarly || res.Error != nil || (res.Shards != nil && res.Shards.Failed > 0) {
+		return Logs{}, 0, fmt.Errorf("Elasticsearch query did not return a complete result")
 	}
 
-	var message []map[string]interface{}
-
-	for _, v := range response {
-		message = append(message, v.Source)
+	message := make([]map[string]interface{}, 0, len(res.Hits.Hits))
+	for _, hit := range res.Hits.Hits {
+		if hit == nil {
+			return Logs{}, 0, fmt.Errorf("invalid Elasticsearch hit")
+		}
+		var source map[string]interface{}
+		if len(hit.Source) > 0 {
+			if err := sonic.Unmarshal(hit.Source, &source); err != nil {
+				return Logs{}, 0, fmt.Errorf("invalid Elasticsearch source")
+			}
+		}
+		message = append(message, source)
 	}
 
 	return Logs{
 		ProviderName: ElasticSearchDsProviderName,
 		Message:      message,
-	}, len(response), nil
+	}, len(message), nil
 }
+
+func (e ElasticSearchDsProvider) Close() error { e.Cli.Stop(); return nil }
 
 func (e ElasticSearchDsProvider) Check() (bool, error) {
 	header := make(map[string]string)

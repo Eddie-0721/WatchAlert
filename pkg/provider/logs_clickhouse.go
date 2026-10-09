@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 	"watchAlert/internal/models"
 
@@ -14,6 +15,7 @@ import (
 type ClickHouseProvider struct {
 	client         *sql.DB
 	ExternalLabels map[string]interface{}
+	Ctx            context.Context
 }
 
 func NewClickHouseClient(ctx context.Context, ds models.AlertDataSource) (LogsFactoryProvider, error) {
@@ -24,22 +26,40 @@ func NewClickHouseClient(ctx context.Context, ds models.AlertDataSource) (LogsFa
 			Password: ds.Auth.Pass,
 		},
 		Settings: clickhouse.Settings{
-			"max_execution_time": 60,
+			"max_execution_time":   60,
+			"max_result_rows":      10000,
+			"max_result_bytes":     maxQueryBodyBytes,
+			"result_overflow_mode": "throw",
 		},
 		DialTimeout: time.Second * time.Duration(ds.ClickHouseConfig.Timeout),
 	})
 	if conn == nil {
 		return nil, errors.New("clickhouse connection failed")
 	}
+	conn.SetMaxOpenConns(8)
+	conn.SetMaxIdleConns(2)
+	conn.SetConnMaxIdleTime(5 * time.Minute)
+	conn.SetConnMaxLifetime(30 * time.Minute)
 
 	return ClickHouseProvider{
 		client:         conn,
 		ExternalLabels: ds.Labels,
+		Ctx:            ctx,
 	}, nil
 }
 
 func (c ClickHouseProvider) Query(options LogQueryOptions) (Logs, int, error) {
-	rows, err := c.client.Query(options.ClickHouse.Query)
+	requestCtx := c.Ctx
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+	return c.QueryContext(requestCtx, options)
+}
+
+func (c ClickHouseProvider) QueryContext(requestCtx context.Context, options LogQueryOptions) (Logs, int, error) {
+	queryCtx, cancel := context.WithTimeout(requestCtx, 60*time.Second)
+	defer cancel()
+	rows, err := c.client.QueryContext(queryCtx, options.ClickHouse.Query)
 	if err != nil {
 		return Logs{}, 0, err
 	}
@@ -51,16 +71,15 @@ func (c ClickHouseProvider) Query(options LogQueryOptions) (Logs, int, error) {
 	}
 
 	var messages []map[string]interface{}
+	values := make([]interface{}, len(columns))
+	dest := make([]interface{}, len(columns))
+	for i := range values {
+		dest[i] = &values[i]
+	}
 
 	for rows.Next() {
-		// 每次循环都重新绑定指针,因为 Scan 是通过指针写入数据的.
-		var values = make([]interface{}, len(columns))
-		for i := range columns {
-			values[i] = new(interface{})
-		}
-
 		// 扫描数据到 values
-		if err := rows.Scan(values...); err != nil {
+		if err := rows.Scan(dest...); err != nil {
 			logc.Error(context.Background(), "clickhouse scan error:", err)
 			return Logs{}, 0, err
 		}
@@ -68,7 +87,7 @@ func (c ClickHouseProvider) Query(options LogQueryOptions) (Logs, int, error) {
 		entry := make(map[string]interface{})
 		for i, col := range columns {
 			// 取出指针指向的实际数据
-			val := *(values[i].(*interface{}))
+			val := values[i]
 			if val == nil {
 				entry[col] = ""
 				continue
@@ -80,6 +99,9 @@ func (c ClickHouseProvider) Query(options LogQueryOptions) (Logs, int, error) {
 			}
 		}
 		messages = append(messages, entry)
+		if len(messages) > 10000 {
+			return Logs{}, 0, fmt.Errorf("ClickHouse result exceeds 10000 rows")
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -93,13 +115,17 @@ func (c ClickHouseProvider) Query(options LogQueryOptions) (Logs, int, error) {
 }
 
 func (c ClickHouseProvider) Check() (bool, error) {
-	err := c.client.Ping()
+	checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := c.client.PingContext(checkCtx)
 	if err != nil {
 		return false, err
 	}
 
 	return true, nil
 }
+
+func (c ClickHouseProvider) Close() error { return c.client.Close() }
 
 func (c ClickHouseProvider) GetExternalLabels() map[string]interface{} {
 	return c.ExternalLabels

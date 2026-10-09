@@ -74,11 +74,11 @@ func initBasic() {
 	// 初始化服务
 	services.NewServices(ctx)
 
-	// 启用告警评估携程
-	alert.Initialize(ctx)
-
 	// 导入数据源 Client 到存储池
 	importClientPools(ctx)
+
+	// Install clients before evaluators can acquire them.
+	alert.Initialize(ctx)
 
 	// 加载静默规则
 	go pushMuteRuleToRedis()
@@ -119,21 +119,22 @@ func importClientPools(ctx *ctx.Context) {
 		return
 	}
 
+	if err := initializeDatasourceClients(list, services.DatasourceService.WithAddClientToProviderPools); err != nil {
+		logc.Error(ctx.Ctx, "Some datasource clients could not be initialized; affected evaluations will report client unavailable")
+	}
+}
+
+func initializeDatasourceClients(list []models.AlertDataSource, create func(models.AlertDataSource) error) error {
 	g := new(errgroup.Group)
+	g.SetLimit(8)
 	for _, datasource := range list {
 		ds := datasource
 		if !ds.GetEnabled() {
 			continue
 		}
-		g.Go(func() error {
-			err := services.DatasourceService.WithAddClientToProviderPools(ds)
-			if err != nil {
-				logc.Error(ctx.Ctx, fmt.Sprintf("添加到 Client 存储池失败, err: %s", err.Error()))
-				return err
-			}
-			return nil
-		})
+		g.Go(func() error { return create(ds) })
 	}
+	return g.Wait()
 }
 
 func pushMuteRuleToRedis() {
