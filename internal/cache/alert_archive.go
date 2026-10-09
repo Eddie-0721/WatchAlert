@@ -9,6 +9,9 @@ import (
 
 var recoveredEventDeleteCAS = redis.NewScript(`
 if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+local indexType = redis.call('TYPE', KEYS[2]).ok
+if indexType ~= 'none' and indexType ~= 'zset' then return redis.error_reply('invalid rule index type') end
+redis.call('ZREM', KEYS[2], ARGV[3])
 return redis.call('HDEL', KEYS[1], ARGV[1])
 `)
 
@@ -40,7 +43,7 @@ func (a *AlertCache) RemoveRecoveredEvent(requestCtx context.Context, expected m
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		removed, err := recoveredEventDeleteCAS.Run(a.rc, []string{key}, expected.Fingerprint, raw).Int()
+		removed, err := recoveredEventDeleteCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, raw, ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
 		if err != nil {
 			return false, err
 		}

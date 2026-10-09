@@ -9,6 +9,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/go-redis/redis"
 	"github.com/zeromicro/go-zero/core/logc"
+	"golang.org/x/sync/singleflight"
 )
 
 type (
@@ -16,6 +17,9 @@ type (
 	AlertCache struct {
 		rc *redis.Client
 		sync.RWMutex
+		indexReady sync.Map
+		indexRetry sync.Map
+		indexBuild singleflight.Group
 	}
 
 	// AlertCacheInterface 定义了事件缓存的操作接口
@@ -27,6 +31,7 @@ type (
 		RemoveAlertEvent(tenantId, faultCenterId, fingerprint string)
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
+		GetRuleEvents(context.Context, models.AlertEventCacheKey, string, string) (map[string]*models.AlertCurEvent, error)
 		GetEventFromCache(tenantId, faultCenterId, fingerprint string) (models.AlertCurEvent, error)
 	}
 )
@@ -75,7 +80,7 @@ func (a *AlertCache) GetAllEvents(key models.AlertEventCacheKey) (map[string]*mo
 // GetFingerprintsByRuleId 获取与指定规则 ID 相关的指纹列表
 func (a *AlertCache) GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string {
 	key := models.BuildAlertEventCacheKey(tenantId, faultCenterId)
-	events, err := a.GetAllEvents(key)
+	events, err := a.GetRuleEvents(context.Background(), key, tenantId, ruleId)
 	if err != nil {
 		logc.Error(context.Background(), err.Error())
 		return nil
@@ -108,7 +113,9 @@ func (a *AlertCache) GetEventFromCache(tenantId, faultCenterId, fingerprint stri
 
 // 封装 Redis 操作
 func (a *AlertCache) deleteEventCacheHash(key models.AlertEventCacheKey, field string) {
-	a.rc.HDel(string(key), field)
+	if err := deleteIndexedEvent.Run(a.rc, []string{string(key), ruleIndexKey(string(key))}, field).Err(); err != nil {
+		logc.Errorf(context.Background(), "Delete alert cache failed: %v", err)
+	}
 }
 
 func (a *AlertCache) getEventCacheHash(key models.AlertEventCacheKey, field string) (string, error) {

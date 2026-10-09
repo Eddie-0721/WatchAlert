@@ -22,6 +22,9 @@ if ARGV[2] == 'create' then
 else
   if current ~= ARGV[3] then return 0 end
 end
+local indexType = redis.call('TYPE', KEYS[2]).ok
+if indexType ~= 'none' and indexType ~= 'zset' then return redis.error_reply('invalid rule index type') end
+redis.call('ZADD', KEYS[2], 0, ARGV[5])
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[4])
 return 1
 `)
@@ -97,7 +100,7 @@ func (a *AlertCache) updateExisting(requestCtx context.Context, expected models.
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		result, err := eventValueCAS.Run(a.rc, []string{key}, expected.Fingerprint, "update", raw, string(updated)).Int()
+		result, err := eventValueCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, "update", raw, string(updated), ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
 		if err != nil {
 			return false, err
 		}
@@ -235,7 +238,7 @@ func (a *AlertCache) pushEvaluationEvent(event *models.AlertCurEvent) error {
 				return err
 			}
 		}
-		result, err := eventValueCAS.Run(a.rc, []string{key}, event.Fingerprint, mode, raw, string(updated)).Int()
+		result, err := eventValueCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, event.Fingerprint, mode, raw, string(updated), ruleIndexMember(event.RuleId, event.Fingerprint)).Int()
 		if err != nil {
 			return err
 		}

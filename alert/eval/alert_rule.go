@@ -10,7 +10,6 @@ import (
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/provider"
-	"watchAlert/pkg/tools"
 
 	"github.com/zeromicro/go-zero/core/logc"
 )
@@ -286,11 +285,11 @@ func (t *AlertRule) recoverCompleteContext(requestCtx context.Context, tenantId,
 		return
 	}
 
-	// 获取所有的故障中心告警事件
-	events, err := t.ctx.Redis.Alert().GetAllEvents(eventCacheKey)
+	// Read only this rule when the derived index is enabled and complete.
+	events, err := t.ctx.Redis.Alert().GetRuleEvents(requestCtx, eventCacheKey, tenantId, ruleId)
 	if err != nil {
 		t.lastComplete.Delete(ruleId)
-		logc.Errorf(t.ctx.Ctx, "AlertRule.Recover: Failed to get all events: %v", err)
+		logc.Errorf(t.ctx.Ctx, "AlertRule.Recover: Failed to get rule events: %v", err)
 		return
 	}
 
@@ -368,7 +367,7 @@ func (t *AlertRule) recoverCompleteContext(requestCtx context.Context, tenantId,
 	*/
 
 	// 计算需要恢复的指纹列表 (即在 Redis 中存在但在当前活动列表中不存在的指纹)
-	recoverFingerprints := tools.GetSliceDifference(activeRuleFingerprints, curFingerprints)
+	recoverFingerprints := recoveryCandidates(activeRuleFingerprints, current)
 	curTime := time.Now().Unix()
 	recoverWaitTime := t.getRecoverWaitTime(faultCenterInfoKey)
 	for _, fingerprint := range recoverFingerprints {
@@ -428,6 +427,16 @@ func (t *AlertRule) recoverCompleteContext(requestCtx context.Context, tenantId,
 			continue
 		}
 	}
+}
+
+func recoveryCandidates(cached []string, current map[string]struct{}) []string {
+	var result []string
+	for _, fp := range cached {
+		if _, active := current[fp]; !active {
+			result = append(result, fp)
+		}
+	}
+	return result
 }
 
 // getRecoverWaitTime 获取恢复等待时间

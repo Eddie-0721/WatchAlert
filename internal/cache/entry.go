@@ -10,6 +10,7 @@ type (
 	entryCache struct {
 		redis    *redis.Client
 		provider *ProviderPoolStore
+		alert    AlertCacheInterface
 	}
 
 	InterEntryCache interface {
@@ -29,12 +30,13 @@ func NewEntryCache() InterEntryCache {
 	return &entryCache{
 		redis:    r,
 		provider: p,
+		alert:    newAlertCacheInterface(r),
 	}
 }
 
 func (e entryCache) Redis() *redis.Client              { return e.redis }
 func (e entryCache) Silence() SilenceCacheInterface    { return newSilenceCacheInterface(e.redis) }
-func (e entryCache) Alert() AlertCacheInterface        { return newAlertCacheInterface(e.redis) }
+func (e entryCache) Alert() AlertCacheInterface        { return e.alert }
 func (e entryCache) ProviderPools() *ProviderPoolStore { return e.provider }
 func (e entryCache) FaultCenter() FaultCenterCacheInterface {
 	return newFaultCenterCacheInterface(e.redis)

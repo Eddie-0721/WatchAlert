@@ -6,6 +6,9 @@ Server:
 # Optional per-process evaluation limits. Applies to active alert/recording
 # queries; no backlog of missed ticks is replayed after a slow evaluation.
 Evaluation:
+  # Enable only after every backend writer runs a rule-index-aware version.
+  # On first read after restart the derived index is rebuilt from source data.
+  ruleEventIndex: false
   maxConcurrentQueries: 32
   maxDatasourcesPerRule: 4
 

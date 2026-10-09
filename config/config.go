@@ -22,8 +22,9 @@ type App struct {
 
 // Evaluation limits apply to running datasource queries, not just startup.
 type Evaluation struct {
-	MaxConcurrentQueries  int `json:"maxConcurrentQueries"`
-	MaxDatasourcesPerRule int `json:"maxDatasourcesPerRule"`
+	RuleEventIndex        bool `json:"ruleEventIndex"`
+	MaxConcurrentQueries  int  `json:"maxConcurrentQueries"`
+	MaxDatasourcesPerRule int  `json:"maxDatasourcesPerRule"`
 }
 
 type Server struct {

@@ -63,12 +63,27 @@ type memoryAlerts struct {
 	cache.AlertCacheInterface
 	events        map[string]*models.AlertCurEvent
 	reads, writes int
+	ruleReadError error
 	mu            sync.Mutex
 }
 
 func (m *memoryAlerts) GetAllEvents(models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error) {
 	m.reads++
 	return m.events, nil
+}
+
+func (m *memoryAlerts) GetRuleEvents(_ context.Context, _ models.AlertEventCacheKey, tenant, rule string) (map[string]*models.AlertCurEvent, error) {
+	m.reads++
+	if m.ruleReadError != nil {
+		return nil, m.ruleReadError
+	}
+	result := make(map[string]*models.AlertCurEvent)
+	for fp, event := range m.events {
+		if event != nil && event.TenantId == tenant && event.RuleId == rule {
+			result[fp] = event
+		}
+	}
+	return result, nil
 }
 func (m *memoryAlerts) GetEventFromCache(tenant, center, id string) (models.AlertCurEvent, error) {
 	m.mu.Lock()
