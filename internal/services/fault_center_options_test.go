@@ -20,6 +20,13 @@ func (r optionCenters) List(string, string) ([]models.FaultCenter, error) {
 	return []models.FaultCenter{{TenantId: "t", ID: "fc", Name: "Production"}, {TenantId: "t", ID: "fc2", Name: "Staging"}}, r.err
 }
 
+func (r optionCenters) ListContext(ctx context.Context, tenant, query string) ([]models.FaultCenter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.List(tenant, query)
+}
+
 func (r optionCenters) ListOptions(ctx context.Context, tenant, query string) ([]models.FaultCenterOption, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

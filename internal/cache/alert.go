@@ -32,6 +32,7 @@ type (
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
 		GetAllEventsContext(context.Context, models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
+		CountEventStates(context.Context, models.AlertEventCacheKey) (EventStateCounts, error)
 		GetEventsByFingerprintContext(context.Context, models.AlertEventCacheKey, string) (map[string]*models.AlertCurEvent, error)
 		GetRuleEvents(context.Context, models.AlertEventCacheKey, string, string) (map[string]*models.AlertCurEvent, error)
 		GetEventFromCache(tenantId, faultCenterId, fingerprint string) (models.AlertCurEvent, error)

@@ -103,7 +103,7 @@ func (faultCenterController faultCenterController) List(ctx *gin.Context) {
 		if r.View == "options" {
 			return services.FaultCenterService.ListOptions(ctx.Request.Context(), r)
 		}
-		return services.FaultCenterService.List(r)
+		return services.FaultCenterService.ListContext(ctx.Request.Context(), r)
 	})
 }
 

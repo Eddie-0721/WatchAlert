@@ -21,6 +21,7 @@ type (
 		Update(req interface{}) (data interface{}, err interface{})
 		Delete(req interface{}) (data interface{}, err interface{})
 		List(req interface{}) (data interface{}, err interface{})
+		ListContext(context.Context, interface{}) (interface{}, interface{})
 		ListOptions(context.Context, interface{}) (interface{}, interface{})
 		Get(req interface{}) (data interface{}, err interface{})
 		Reset(req interface{}) (data interface{}, err interface{})
@@ -161,32 +162,31 @@ func (f faultCenterService) ListOptions(requestCtx context.Context, req interfac
 }
 
 func (f faultCenterService) List(req interface{}) (data interface{}, err interface{}) {
+	return f.ListContext(context.Background(), req)
+}
+
+func (f faultCenterService) ListContext(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	queryCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	if err := queryCtx.Err(); err != nil {
+		return nil, err
+	}
 	r := req.(*types.RequestFaultCenterQuery)
-	data, err = f.ctx.DB.FaultCenter().List(r.TenantId, r.Query)
+	faultCenters, err := f.ctx.DB.FaultCenter().ListContext(queryCtx, r.TenantId, r.Query)
 	if err != nil {
 		return nil, err
 	}
-	if data == nil {
-		return data, nil
-	}
-
-	faultCenters := data.([]models.FaultCenter)
-	for index, fc := range data.([]models.FaultCenter) {
-		events, err := f.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(fc.TenantId, fc.ID))
+	for index, fc := range faultCenters {
+		counts, err := f.ctx.Redis.Alert().CountEventStates(queryCtx, models.BuildAlertEventCacheKey(fc.TenantId, fc.ID))
 		if err != nil {
 			return nil, err
 		}
-
-		for _, event := range events {
-			switch event.Status {
-			case models.StatePreAlert:
-				faultCenters[index].CurrentPreAlertNumber++
-			case models.StateAlerting:
-				faultCenters[index].CurrentAlertNumber++
-			case models.StatePendingRecovery:
-				faultCenters[index].CurrentRecoverNumber++
-			}
-		}
+		faultCenters[index].CurrentPreAlertNumber += counts.PreAlert
+		faultCenters[index].CurrentAlertNumber += counts.Alerting
+		faultCenters[index].CurrentRecoverNumber += counts.PendingRecovery
+	}
+	if err := queryCtx.Err(); err != nil {
+		return nil, err
 	}
 
 	return faultCenters, nil

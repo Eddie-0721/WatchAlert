@@ -25,8 +25,9 @@ func (s *centerOptionService) ListOptions(ctx context.Context, req interface{}) 
 	return []models.FaultCenterOption{{ID: "fc", Name: "Production"}}, nil
 }
 
-func (s *centerOptionService) List(req interface{}) (interface{}, interface{}) {
+func (s *centerOptionService) ListContext(ctx context.Context, req interface{}) (interface{}, interface{}) {
 	s.full++
+	s.ctx = ctx
 	s.request = req.(*types.RequestFaultCenterQuery)
 	return []models.FaultCenter{{ID: "fc", CurrentAlertNumber: 7}}, nil
 }
@@ -44,7 +45,7 @@ func TestCenterOptionsControllerPreservesTenantContextAndDefault(t *testing.T) {
 		ctx.Set("TenantID", "authorized")
 		FaultCenterController.List(ctx)
 		cancel()
-		if fixture.request.TenantId != "authorized" || fixture.request.Query != "payment" {
+		if fixture.request.TenantId != "authorized" || fixture.request.Query != "payment" || fixture.ctx != requestCtx {
 			t.Fatal("list must use middleware tenant and bind search", fixture.request)
 		}
 		if recorder.Code != 200 {

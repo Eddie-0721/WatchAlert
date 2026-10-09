@@ -16,6 +16,7 @@ type (
 		Update(params models.FaultCenter) error
 		Delete(tenantId, id string) error
 		List(tenantId, query string) ([]models.FaultCenter, error)
+		ListContext(context.Context, string, string) ([]models.FaultCenter, error)
 		ListIdentities(context.Context, string) ([]models.FaultCenter, error)
 		ListOptions(context.Context, string, string) ([]models.FaultCenterOption, error)
 		Get(tenantId, id, name string) (models.FaultCenter, error)
@@ -89,9 +90,13 @@ func (f faultCenterRepo) ListOptions(ctx context.Context, tenantID, query string
 }
 
 func (f faultCenterRepo) List(tenantId, query string) ([]models.FaultCenter, error) {
+	return f.ListContext(context.Background(), tenantId, query)
+}
+
+func (f faultCenterRepo) ListContext(ctx context.Context, tenantId, query string) ([]models.FaultCenter, error) {
 	var (
 		data []models.FaultCenter
-		db   = f.db.Model(&models.FaultCenter{})
+		db   = f.db.WithContext(ctx).Model(&models.FaultCenter{})
 	)
 
 	if tenantId != "" {

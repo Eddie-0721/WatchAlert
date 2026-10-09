@@ -94,3 +94,40 @@ func TestCenterOptionsProjectionSearchAndCancellation(t *testing.T) {
 		t.Fatal("options SQL must stop waiting for canceled requests", err)
 	}
 }
+
+func TestCenterFullListContextPreservesScopeAndCancellation(t *testing.T) {
+	db := eventTestDB(t)
+	if err := db.AutoMigrate(&models.FaultCenter{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []models.FaultCenter{
+		{TenantId: "t", ID: "fc", Name: "Production", Description: "payments", NoticeIds: []string{"notice"}},
+		{TenantId: "other", ID: "other", Name: "Production"},
+	} {
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := faultCenterRepo{entryRepo: entryRepo{db: db}}
+	rows, err := r.ListContext(context.Background(), "t", "Production")
+	if err != nil || len(rows) != 1 || rows[0].ID != "fc" || len(rows[0].NoticeIds) != 1 {
+		t.Fatal("full list lost scope or configuration", rows, err)
+	}
+	// Internal startup List("", "") intentionally enumerates all centers;
+	// HTTP tenant authorization remains in middleware, not this internal API.
+	rows, err = r.List("", "")
+	if err != nil || len(rows) != 2 {
+		t.Fatal("consumer startup list changed", rows, err)
+	}
+	pool, _ := db.DB()
+	conn, err := pool.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, err := r.ListContext(ctx, "t", ""); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("full list SQL wait ignored cancellation", err)
+	}
+}
