@@ -32,6 +32,7 @@ func (w *SREFlowSender) post(hook string, headers map[string]string, content str
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
 		bodyByte, err := io.ReadAll(res.Body)
@@ -41,5 +42,6 @@ func (w *SREFlowSender) post(hook string, headers map[string]string, content str
 		return errors.New(string(bodyByte))
 	}
 
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	return nil
 }

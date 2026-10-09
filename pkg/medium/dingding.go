@@ -49,6 +49,7 @@ func (d *DingDingSender) post(hook, sign, content string) error {
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	var response DingResponse
 	if err := tools.ParseReaderBody(res.Body, &response); err != nil {

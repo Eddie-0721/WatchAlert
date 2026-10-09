@@ -14,6 +14,7 @@ func GetOpenIDConfiguration(upper string) (*types.RespOpenIDConfiguration, error
 		return nil, err
 	}
 
+	defer resp.Body.Close()
 	var d types.RespOpenIDConfiguration
 	if err = tools.ParseReaderBody(resp.Body, &d); err != nil {
 		return nil, err
@@ -41,6 +42,7 @@ func GetOauthToken(tokenUrl, code, clientID, clientSecret string) (*types.OauthT
 		return nil, err
 	}
 
+	defer resp.Body.Close()
 	var d types.OauthToken
 	if err = tools.ParseReaderBody(resp.Body, &d); err != nil {
 		return nil, err
@@ -62,6 +64,7 @@ func GetCurrentUser(userInfoUrl, token string) (*types.RespOidcUserInfo, error) 
 		return nil, err
 	}
 
+	defer resp.Body.Close()
 	var d types.RespOidcUserInfo
 	if err = tools.ParseReaderBody(resp.Body, &d); err != nil {
 		return nil, err

@@ -11,77 +11,64 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
+// Transport owns only sockets, never credentials/cookies. Keep the legacy TLS
+// behavior here; enabling certificate verification requires its own rollout.
+var sharedHTTPTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 10
+	t.IdleConnTimeout = 90 * time.Second
+	return t
+}()
+
+var freshHTTPTransport = func() *http.Transport {
+	t := sharedHTTPTransport.Clone()
+	t.DisableKeepAlives = true
+	return t
+}()
+
 func Get(headers map[string]string, url string, timeout int) (*http.Response, error) {
-	// 统一跳过证书检测，避免存在不安全的https
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		DisableKeepAlives:   false,
-	}
+	return GetContext(context.Background(), headers, url, timeout)
+}
 
-	client := http.Client{
-		Timeout:   time.Duration(timeout) * time.Second,
-		Transport: transport,
-	}
+func GetContext(ctx context.Context, headers map[string]string, url string, timeout int) (*http.Response, error) {
+	return doRequest(ctx, http.MethodGet, headers, url, nil, timeout, sharedHTTPTransport)
+}
 
-	request, err := http.NewRequest(http.MethodGet, url, nil)
-	for k, v := range headers {
-		request.Header.Set(k, v)
-	}
-	if err != nil {
-		logc.Error(context.Background(), fmt.Sprintf("Tools get 请求建立失败, err: %s", err.Error()))
-		return nil, err
-	}
-	resp, err := client.Do(request)
-	if err != nil {
-		logc.Error(context.Background(), fmt.Sprintf("Tools get 请求发送失败, err: %s", err.Error()))
-		return nil, err
-	}
-
-	return resp, nil
+// Certificate probes need a new handshake, not a pooled connection's old certificate.
+func GetFreshConnection(headers map[string]string, url string, timeout int) (*http.Response, error) {
+	return doRequest(context.Background(), http.MethodGet, headers, url, nil, timeout, freshHTTPTransport)
 }
 
 func Post(headers map[string]string, url string, bodyReader *bytes.Reader, timeout int) (*http.Response, error) {
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		DisableKeepAlives:   false,
-	}
+	return PostContext(context.Background(), headers, url, bodyReader, timeout)
+}
 
-	client := http.Client{
-		Timeout:   time.Duration(timeout) * time.Second,
-		Transport: transport,
-	}
+func PostContext(ctx context.Context, headers map[string]string, url string, bodyReader *bytes.Reader, timeout int) (*http.Response, error) {
+	return doRequest(ctx, http.MethodPost, headers, url, bodyReader, timeout, sharedHTTPTransport)
+}
 
-	request, err := http.NewRequest(http.MethodPost, url, bodyReader)
-	request.Header.Set("Content-Type", "application/json")
+// Callers must close response.Body; reading successful bodies to EOF permits
+// connection reuse. Client timeout still covers reading the returned body.
+func doRequest(ctx context.Context, method string, headers map[string]string, url string, body io.Reader, timeout int, transport *http.Transport) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if method == http.MethodPost {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	for k, v := range headers {
 		request.Header.Set(k, v)
 	}
-	if err != nil {
-		logc.Error(context.Background(), fmt.Sprintf("Tools post 请求建立失败, err: %s", err.Error()))
-		return nil, err
+	if timeout <= 0 {
+		timeout = 10
 	}
-	resp, err := client.Do(request)
-	if err != nil {
-		logc.Error(context.Background(), fmt.Sprintf("Tools post 请求发送失败, err: %s", err.Error()))
-		return nil, err
-	}
-
-	return resp, nil
+	client := http.Client{Timeout: time.Duration(timeout) * time.Second, Transport: transport}
+	return client.Do(request)
 }
 
 // CreateBasicAuthHeader 创建带认证的HTTP头

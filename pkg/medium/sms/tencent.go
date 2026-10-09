@@ -169,6 +169,7 @@ func (t *TencentSMSNotifier) Post(Messages, PhoneNumbers, logsign string) (strin
 		return "", fmt.Errorf("发送腾讯云短信请求失败: %s", err.Error())
 	}
 
+	defer response.Body.Close()
 	body, _ := io.ReadAll(response.Body)
 	return string(body), nil
 }

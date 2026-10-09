@@ -246,7 +246,7 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 			StartAt: startsAt.Unix(),
 			EndAt:   curAt.Unix(),
 		}
-		log, count, err = cli.(provider.LokiProvider).Query(queryOptions)
+		log, count, err = cli.(provider.LokiProvider).QueryContext(requestCtx, queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Loki查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.LokiConfig.LogQL, err)
 			return failedEvaluation("query_failed")
@@ -332,7 +332,7 @@ func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasource
 			StartAt: int32(startsAt.Unix()),
 			EndAt:   int32(curAt.Unix()),
 		}
-		log, count, err = cli.(provider.VictoriaLogsProvider).Query(queryOptions)
+		log, count, err = cli.(provider.VictoriaLogsProvider).QueryContext(requestCtx, queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "VictoriaLogs查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, LogQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.VictoriaLogsConfig.LogQL, err)
 			return failedEvaluation("query_failed")
@@ -461,7 +461,7 @@ func traces(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasour
 			StartAt: startsAt.UnixMicro(),
 			EndAt:   curAt.UnixMicro(),
 		}
-		queryRes, err = cli.(provider.JaegerDsProvider).Query(queryOptions)
+		queryRes, err = cli.(provider.JaegerDsProvider).QueryContext(requestCtx, queryOptions)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Jaeger查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 服务: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.JaegerConfig.Service, err)
 			return failedEvaluation("query_failed")

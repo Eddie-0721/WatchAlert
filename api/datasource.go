@@ -171,12 +171,14 @@ func (datasourceController datasourceController) PromQuery(ctx *gin.Context) {
 			}
 
 			fullURL := fmt.Sprintf("%s%s?%s", source.HTTP.URL, path, params.Encode())
-			get, err := tools.Get(tools.CreateBasicAuthHeader(source.Auth.User, source.Auth.Pass), fullURL, 10)
+			get, err := tools.GetContext(ctx.Request.Context(), tools.CreateBasicAuthHeader(source.Auth.User, source.Auth.Pass), fullURL, 10)
 			if err != nil {
 				return nil, err
 			}
 
-			if err := tools.ParseReaderBody(get.Body, &res); err != nil {
+			parseErr := tools.ParseReaderBody(get.Body, &res)
+			_ = get.Body.Close()
+			if err := parseErr; err != nil {
 				return nil, err
 			}
 
@@ -228,12 +230,14 @@ func (datasourceController datasourceController) PromQueryRange(ctx *gin.Context
 			}
 
 			fullURL := fmt.Sprintf("%s%s?%s", source.HTTP.URL, path, params.Encode())
-			get, err := tools.Get(tools.CreateBasicAuthHeader(source.Auth.User, source.Auth.Pass), fullURL, 10)
+			get, err := tools.GetContext(ctx.Request.Context(), tools.CreateBasicAuthHeader(source.Auth.User, source.Auth.Pass), fullURL, 10)
 			if err != nil {
 				return nil, err
 			}
 
-			if err := tools.ParseReaderBody(get.Body, &res); err != nil {
+			parseErr := tools.ParseReaderBody(get.Body, &res)
+			_ = get.Body.Close()
+			if err := parseErr; err != nil {
 				return nil, err
 			}
 

@@ -31,7 +31,7 @@ func (p Ssler) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) [
 	}
 
 	// 发起 HTTPS 请求
-	resp, err := tools.Get(nil, "https://"+option.Endpoint, option.Timeout)
+	resp, err := tools.GetFreshConnection(nil, "https://"+option.Endpoint, option.Timeout)
 	if err != nil {
 		// 返回失败指标
 		return p.createFailureMetrics(baseLabels, timestamp, time.Since(startTime))

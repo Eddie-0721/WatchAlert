@@ -2,11 +2,9 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/tools"
@@ -32,11 +30,12 @@ func NewLokiClient(datasource models.AlertDataSource) (LogsFactoryProvider, erro
 }
 
 type result struct {
-	Data Data `json:"data"`
+	Status string `json:"status"`
+	Data   *Data  `json:"data"`
 }
 
 type Data struct {
-	ResultType string   `json:"status"`
+	ResultType string   `json:"resultType"`
 	Result     []Result `json:"result"`
 }
 
@@ -46,10 +45,14 @@ type Result struct {
 }
 
 func (l LokiProvider) Query(options LogQueryOptions) (Logs, int, error) {
+	return l.QueryContext(context.Background(), options)
+}
+
+func (l LokiProvider) QueryContext(requestCtx context.Context, options LogQueryOptions) (Logs, int, error) {
 	curTime := time.Now()
 
 	if options.Loki.Query == "" {
-		return Logs{}, 0, nil
+		return Logs{}, 0, fmt.Errorf("Loki query must not be empty")
 	}
 
 	if options.Loki.Direction == "" {
@@ -60,13 +63,12 @@ func (l LokiProvider) Query(options LogQueryOptions) (Logs, int, error) {
 		options.Loki.Limit = 100
 	}
 
-	if options.StartAt == "" {
-		duration, _ := time.ParseDuration(strconv.Itoa(1) + "h")
-		options.StartAt = curTime.Add(-duration).Format(time.RFC3339Nano)
+	if options.StartAt == "" || options.StartAt == nil {
+		options.StartAt = curTime.Add(-time.Hour).UnixNano()
 	}
 
-	if options.EndAt == "" {
-		options.EndAt = curTime.Format(time.RFC3339Nano)
+	if options.EndAt == "" || options.EndAt == nil {
+		options.EndAt = curTime.UnixNano()
 	}
 
 	args := fmt.Sprintf("/loki/api/v1/query_range?query=%s&direction=%s&limit=%d&start=%d&end=%d", url.QueryEscape(options.Loki.Query), options.Loki.Direction, options.Loki.Limit, options.StartAt.(int64), options.EndAt.(int64))
@@ -77,14 +79,21 @@ func (l LokiProvider) Query(options LogQueryOptions) (Logs, int, error) {
 		headers[key] = value
 	}
 
-	res, err := tools.Get(headers, requestURL, 10)
+	res, err := tools.GetContext(requestCtx, headers, requestURL, int(l.Timeout))
 	if err != nil {
 		return Logs{}, 0, err
 	}
 
 	var resultData result
-	if err := tools.ParseReaderBody(res.Body, &resultData); err != nil {
-		return Logs{}, 0, errors.New(fmt.Sprintf("json.Unmarshal failed, %s", err.Error()))
+	body, err := readQueryBody(res)
+	if err != nil {
+		return Logs{}, 0, err
+	}
+	if err := sonic.Unmarshal(body, &resultData); err != nil {
+		return Logs{}, 0, fmt.Errorf("invalid Loki JSON response")
+	}
+	if resultData.Status != "success" || resultData.Data == nil || resultData.Data.ResultType != "streams" || resultData.Data.Result == nil {
+		return Logs{}, 0, fmt.Errorf("Loki query did not return a complete stream result")
 	}
 
 	var (
@@ -152,6 +161,7 @@ func (l LokiProvider) Check() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer closeHealthBody(res)
 
 	if res.StatusCode != http.StatusOK {
 		logc.Error(context.Background(), fmt.Errorf("unhealthy status: %d", res.StatusCode))

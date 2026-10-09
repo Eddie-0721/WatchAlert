@@ -225,10 +225,11 @@ func (t *AlertRule) processSingleDatasource(requestCtx context.Context, dsId str
 		return failedEvaluation("datasource_type_mismatch")
 	}
 
-	// 检查数据源健康状态
-	// Prometheus' actual query already validates HTTP and result completeness.
-	// Keep other providers' preflight until their error semantics are audited.
-	if instance.Type != DatasourceTypePrometheus {
+	// These providers validate HTTP/decoding failures in the actual query.
+	// Other providers retain preflight until their error semantics are audited.
+	switch instance.Type {
+	case DatasourceTypePrometheus, provider.LokiDsProviderName, provider.VictoriaLogsDsProviderName, provider.JaegerDsProviderName:
+	default:
 		if ok, _ := provider.CheckDatasourceHealth(instance); !ok {
 			logc.Errorf(t.ctx.Ctx, "Datasource %s is unhealthy", dsId)
 			return failedEvaluation("datasource_unhealthy")

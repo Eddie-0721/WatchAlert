@@ -5,11 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
-	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/tools"
 
@@ -44,6 +42,14 @@ func NewVictoriaLogsClient(ctx context.Context, datasource models.AlertDataSourc
 }
 
 func (v VictoriaLogsProvider) Query(options LogQueryOptions) (Logs, int, error) {
+	requestCtx := v.Ctx
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+	return v.QueryContext(requestCtx, options)
+}
+
+func (v VictoriaLogsProvider) QueryContext(requestCtx context.Context, options LogQueryOptions) (Logs, int, error) {
 	curTime := time.Now()
 
 	if options.StartAt == "" || options.StartAt == nil {
@@ -69,19 +75,15 @@ func (v VictoriaLogsProvider) Query(options LogQueryOptions) (Logs, int, error) 
 		headers[key] = value
 	}
 
-	res, err := tools.Get(headers, requestURL, 10)
+	res, err := tools.GetContext(requestCtx, headers, requestURL, int(v.Timeout))
 
 	if err != nil {
-		logc.Error(ctx.Ctx, fmt.Sprintf("查询VictoriaLogs失败: %s", err.Error()))
 		return Logs{}, 0, err
 	}
 
-	respBody, _ := io.ReadAll(res.Body)
-
-	if res.StatusCode != 200 {
-		errMsg := fmt.Sprintf("查询VictoriaLogs失败: %s", string(respBody))
-		logc.Error(v.Ctx, errMsg)
-		return Logs{}, 0, fmt.Errorf("%s", errMsg)
+	respBody, err := readQueryBody(res)
+	if err != nil {
+		return Logs{}, 0, err
 	}
 
 	var (
@@ -89,6 +91,7 @@ func (v VictoriaLogsProvider) Query(options LogQueryOptions) (Logs, int, error) 
 		count   int
 	)
 	scanner := bufio.NewScanner(bytes.NewReader(respBody))
+	scanner.Buffer(make([]byte, 4096), maxQueryBodyBytes+1)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -96,11 +99,16 @@ func (v VictoriaLogsProvider) Query(options LogQueryOptions) (Logs, int, error) 
 		}
 		var msg map[string]interface{}
 		if err := sonic.Unmarshal(line, &msg); err != nil {
-			logc.Error(context.Background(), fmt.Sprintf("VictoriaLogs - 解析行失败: %v，内容: %s", err, string(line)))
-			continue
+			return Logs{}, 0, fmt.Errorf("invalid VictoriaLogs JSON line")
+		}
+		if msg == nil {
+			return Logs{}, 0, fmt.Errorf("invalid VictoriaLogs empty record")
 		}
 		message = append(message, msg)
 		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return Logs{}, 0, fmt.Errorf("incomplete VictoriaLogs result: %w", err)
 	}
 
 	return Logs{
@@ -122,6 +130,7 @@ func (v VictoriaLogsProvider) Check() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer closeHealthBody(res)
 
 	if res.StatusCode != http.StatusOK {
 		logc.Error(v.Ctx, fmt.Errorf("unhealthy status: %d", res.StatusCode))

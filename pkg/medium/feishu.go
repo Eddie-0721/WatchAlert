@@ -63,6 +63,7 @@ func (f *FeiShuSender) post(hook, sign string, msg map[string]any) error {
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	var response FeiShuResponse
 	if err := tools.ParseReaderBody(res.Body, &response); err != nil {

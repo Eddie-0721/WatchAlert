@@ -156,6 +156,7 @@ func (t *TencentPhoneNotifier) Call(ctx context.Context, content, phoneNumber st
 		return errMsg
 	}
 
+	defer response.Body.Close()
 	respStr, _ := io.ReadAll(response.Body)
 	logc.Infof(ctx, "腾讯云电话响应: %s", string(respStr))
 

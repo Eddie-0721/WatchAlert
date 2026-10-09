@@ -39,6 +39,7 @@ func (w *WeChatSender) post(hook, content string) error {
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	var response WeChatResponse
 	if err := tools.ParseReaderBody(res.Body, &response); err != nil {

@@ -128,6 +128,7 @@ func (ds dashboardService) ListGrafanaDashboards(req interface{}) (data interfac
 		return nil, fmt.Errorf("请求错误, err: %s", err.Error())
 	}
 
+	defer get.Body.Close()
 	var d []types.ResponseGrafanaDashboardInfo
 	if err := tools.ParseReaderBody(get.Body, &d); err != nil {
 		return nil, fmt.Errorf("读取body错误, err: %s", err.Error())
@@ -143,6 +144,7 @@ func (ds dashboardService) GetDashboardFullUrl(req interface{}) (data interface{
 		return nil, err
 	}
 
+	defer get.Body.Close()
 	var d types.ResponseGrafanaDashboardMeta
 	if err := tools.ParseReaderBody(get.Body, &d); err != nil {
 		return nil, err

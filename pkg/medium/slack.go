@@ -33,6 +33,7 @@ func (f *SlackSender) post(hook, content string) error {
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
 
 	bodyByte, err := io.ReadAll(res.Body)
 	if err != nil {

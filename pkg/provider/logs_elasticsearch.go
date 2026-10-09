@@ -135,6 +135,7 @@ func (e ElasticSearchDsProvider) Check() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer closeHealthBody(res)
 
 	if res.StatusCode != 200 {
 		return false, fmt.Errorf("状态码非200, 当前: %d", res.StatusCode)
