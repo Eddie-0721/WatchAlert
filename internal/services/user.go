@@ -192,8 +192,8 @@ func (us userService) Update(req interface{}) (interface{}, interface{}) {
 	}
 
 	if r.Phone != "" {
-		_, ok, _ = us.ctx.DB.User().Get("", "", "", r.Phone)
-		if ok {
+		phoneUser, phoneExists, _ := us.ctx.DB.User().Get("", "", "", r.Phone)
+		if phoneExists && phoneUser.UserId != r.UserId {
 			return nil, fmt.Errorf("手机号已存在")
 		}
 	}
