@@ -38,6 +38,13 @@ func (e eventFixtureAlerts) GetAllEventsContext(_ context.Context, key models.Al
 	return e.GetAllEvents(key)
 }
 
+func (e eventFixtureAlerts) GetEventsByFingerprintContext(_ context.Context, key models.AlertEventCacheKey, fingerprint string) (map[string]*models.AlertCurEvent, error) {
+	if event := e.events[key][fingerprint]; event != nil {
+		return map[string]*models.AlertCurEvent{fingerprint: event}, nil
+	}
+	return map[string]*models.AlertCurEvent{}, nil
+}
+
 type eventFixtureMutes struct{ cache.SilenceCacheInterface }
 
 func (e eventFixtureMutes) ListAlertMutesContext(_ context.Context, tenant, center string) ([]models.AlertSilences, error) {

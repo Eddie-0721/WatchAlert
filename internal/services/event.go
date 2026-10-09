@@ -135,7 +135,13 @@ func (e eventService) ListCurrentEventContext(requestCtx context.Context, req in
 		if r.FaultCenterId != "" && center.ID != r.FaultCenterId {
 			continue
 		}
-		events, err := e.ctx.Redis.Alert().GetAllEventsContext(requestCtx, models.BuildAlertEventCacheKey(r.TenantId, center.ID))
+		key := models.BuildAlertEventCacheKey(r.TenantId, center.ID)
+		var events map[string]*models.AlertCurEvent
+		if r.Fingerprint != "" {
+			events, err = e.ctx.Redis.Alert().GetEventsByFingerprintContext(requestCtx, key, r.Fingerprint)
+		} else {
+			events, err = e.ctx.Redis.Alert().GetAllEventsContext(requestCtx, key)
+		}
 		if err != nil {
 			return nil, err
 		}

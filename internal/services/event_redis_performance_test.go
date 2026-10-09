@@ -94,3 +94,22 @@ func BenchmarkCurrentEventListRedis(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkExactCurrentEventRedis(b *testing.B) {
+	for _, n := range []int{1000, 10000} {
+		for _, center := range []string{"fc", ""} {
+			b.Run(fmt.Sprintf("events=%d/center=%s", n, center), func(b *testing.B) {
+				service, _, _ := redisEventFixture(b, n)
+				query := &types.RequestAlertCurEventQuery{TenantId: "t", FaultCenterId: center, Fingerprint: "fp-00000002", IncludeRecovered: true, Page: models.Page{Index: 1, Size: 2}}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					data, err := service.ListCurrentEvent(query)
+					if err != nil || data.(types.ResponseAlertCurEventList).Total != 1 {
+						b.Fatal(data, err)
+					}
+				}
+			})
+		}
+	}
+}

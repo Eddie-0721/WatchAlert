@@ -32,6 +32,7 @@ type (
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
 		GetAllEventsContext(context.Context, models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
+		GetEventsByFingerprintContext(context.Context, models.AlertEventCacheKey, string) (map[string]*models.AlertCurEvent, error)
 		GetRuleEvents(context.Context, models.AlertEventCacheKey, string, string) (map[string]*models.AlertCurEvent, error)
 		GetEventFromCache(tenantId, faultCenterId, fingerprint string) (models.AlertCurEvent, error)
 	}
@@ -76,7 +77,38 @@ func (a *AlertCache) GetAllEventsContext(ctx context.Context, key models.AlertEv
 	if err != nil {
 		return nil, err
 	}
+	return decodeEventRows(ctx, result)
+}
 
+// Event writers use the fingerprint as the hash field. Exact queries need not
+// transfer/decode unrelated rows. Keep the same decoding and filtering semantics
+// as full reads; a missing field is an empty selection, not a storage failure.
+func (a *AlertCache) GetEventsByFingerprintContext(ctx context.Context, key models.AlertEventCacheKey, fingerprint string) (map[string]*models.AlertCurEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if fingerprint == "" {
+		return nil, fmt.Errorf("empty event fingerprint")
+	}
+	a.RLock()
+	defer a.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	raw, err := a.rc.HGet(string(key), fingerprint).Result()
+	if canceled := ctx.Err(); canceled != nil {
+		return nil, canceled
+	}
+	if err == redis.Nil {
+		return map[string]*models.AlertCurEvent{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeEventRows(ctx, map[string]string{fingerprint: raw})
+}
+
+func decodeEventRows(ctx context.Context, result map[string]string) (map[string]*models.AlertCurEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
