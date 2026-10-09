@@ -65,7 +65,18 @@ func CompileSnapshot(rules []models.AlertSilences, now int64) func(map[string]in
 // Production callers propagate errors instead of reporting an unknown silence
 // state as either an active silence or an unmuted event.
 func CompileSnapshotChecked(rules []models.AlertSilences, now int64) (func(map[string]interface{}) bool, error) {
-	var matches []func(map[string]interface{}) bool
+	return compileSnapshotChecked(rules, now, false)
+}
+
+// Batch scans amortize index construction; one-off notification checks keep
+// their lighter linear snapshot. eventCount is a planning hint, not a limit.
+func CompileBatchSnapshotChecked(rules []models.AlertSilences, now int64, eventCount int) (func(map[string]interface{}) bool, error) {
+	return compileSnapshotChecked(rules, now, len(rules) > 8 && eventCount >= 32)
+}
+
+func compileSnapshotChecked(rules []models.AlertSilences, now int64, indexed bool) (silenceMatch, error) {
+	var compiled []compiledSilence
+	var matches []silenceMatch
 	for _, rule := range rules {
 		if rule.Status != 1 || now < rule.StartsAt || now >= rule.EndsAt {
 			continue
@@ -74,7 +85,14 @@ func CompileSnapshotChecked(rules []models.AlertSilences, now int64) (func(map[s
 		if err != nil {
 			return nil, fmt.Errorf("invalid active silence %s: %w", rule.ID, err)
 		}
-		matches = append(matches, match)
+		if indexed {
+			compiled = append(compiled, compiledSilence{labels: rule.Labels, match: match})
+		} else {
+			matches = append(matches, match)
+		}
+	}
+	if indexed {
+		return indexSnapshot(compiled), nil
 	}
 	return func(labels map[string]interface{}) bool {
 		for _, match := range matches {

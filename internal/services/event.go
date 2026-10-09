@@ -185,7 +185,7 @@ func (e eventService) ListCurrentEventContext(requestCtx context.Context, req in
 				if err := requestCtx.Err(); err != nil {
 					return nil, err
 				}
-				matchSilence, err = mute.CompileSnapshotChecked(rules, curTime.Unix())
+				matchSilence, err = mute.CompileBatchSnapshotChecked(rules, curTime.Unix(), len(events))
 				if err != nil {
 					return nil, fmt.Errorf("读取静默状态失败: %w", err)
 				}
