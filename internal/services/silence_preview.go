@@ -48,17 +48,33 @@ func (ass alertSilenceService) preview(r *types.RequestSilencePreview) (*types.R
 	if err != nil {
 		return nil, fmt.Errorf("读取告警失败，无法确认静默影响范围")
 	}
-	matches := make([]types.SilencePreviewSample, 0)
+	// Keep every fingerprint for the freshness digest, but retain only the five
+	// smallest sample pointers. Building scope views for all matches is wasted
+	// work: the API has always returned at most five samples.
+	ids := make([]string, 0)
+	var selected [5]*models.AlertCurEvent
+	sampleCount := 0
 	for _, event := range events {
 		if event == nil || event.TenantId != r.TenantId || event.FaultCenterId != r.FaultCenterId || event.Status == models.StateRecovered || !match(event.Labels) {
 			continue
 		}
-		matches = append(matches, types.SilencePreviewSample{Fingerprint: event.Fingerprint, RuleName: event.RuleName, Scope: buildAlertScope(event.Labels)})
+		ids = append(ids, event.Fingerprint)
+		pos := sampleCount
+		for pos > 0 && event.Fingerprint < selected[pos-1].Fingerprint {
+			pos--
+		}
+		if pos < len(selected) {
+			copy(selected[pos+1:], selected[pos:])
+			selected[pos] = event
+			if sampleCount < len(selected) {
+				sampleCount++
+			}
+		}
 	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].Fingerprint < matches[j].Fingerprint })
-	ids := make([]string, len(matches))
-	for i, event := range matches {
-		ids[i] = event.Fingerprint
+	sort.Strings(ids)
+	samples := make([]types.SilencePreviewSample, sampleCount)
+	for i, event := range selected[:sampleCount] {
+		samples[i] = types.SilencePreviewSample{Fingerprint: event.Fingerprint, RuleName: event.RuleName, Scope: buildAlertScope(event.Labels)}
 	}
 	// This digest is a freshness check, not an authorization token. Permissions
 	// are independently enforced for preview AND the actual write endpoint.
@@ -68,10 +84,7 @@ func (ass alertSilenceService) preview(r *types.RequestSilencePreview) (*types.R
 		Before  *models.AlertSilences
 		IDs     []string
 	}{r.TenantId, r, before, ids})
-	result := &types.ResponseSilencePreview{PreviewHash: fmt.Sprintf("%x", sha256.Sum256(payload)), PreviewAt: now, Total: len(matches), Samples: matches, Truncated: len(matches) > 5}
-	if len(matches) > 5 {
-		result.Samples = matches[:5]
-	}
+	result := &types.ResponseSilencePreview{PreviewHash: fmt.Sprintf("%x", sha256.Sum256(payload)), PreviewAt: now, Total: len(ids), Samples: samples, Truncated: len(ids) > len(selected)}
 	return result, nil
 }
 
