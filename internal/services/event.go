@@ -18,6 +18,7 @@ type eventService struct {
 
 type InterEventService interface {
 	ListCurrentEvent(req interface{}) (interface{}, interface{})
+	ListCurrentEventContext(context.Context, interface{}) (interface{}, interface{})
 	ListHistoryEvent(context.Context, interface{}) (interface{}, interface{})
 	ProcessAlertEvent(req interface{}) (interface{}, interface{})
 	DeleteAlertEvent(req interface{}) (interface{}, interface{})
@@ -85,6 +86,15 @@ func (e eventService) DeleteAlertEvent(req interface{}) (interface{}, interface{
 }
 
 func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{}) {
+	return e.ListCurrentEventContext(context.Background(), req)
+}
+
+func (e eventService) ListCurrentEventContext(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	requestCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	if err := requestCtx.Err(); err != nil {
+		return nil, err
+	}
 	r, ok := req.(*types.RequestAlertCurEventQuery)
 	if !ok || r == nil {
 		return nil, fmt.Errorf("invalid request type: expected *models.AlertCurEventQuery")
@@ -96,7 +106,7 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	}
 	curTime := time.Now()
 
-	centers, err := e.ctx.DB.FaultCenter().List(r.TenantId, "")
+	centers, err := e.ctx.DB.FaultCenter().ListIdentities(requestCtx, r.TenantId)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +129,20 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 	}
 	var total int64
 	for _, center := range centers {
+		if err := requestCtx.Err(); err != nil {
+			return nil, err
+		}
 		if r.FaultCenterId != "" && center.ID != r.FaultCenterId {
 			continue
 		}
-		events, err := e.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(r.TenantId, center.ID))
+		events, err := e.ctx.Redis.Alert().GetAllEventsContext(requestCtx, models.BuildAlertEventCacheKey(r.TenantId, center.ID))
 		if err != nil {
 			return nil, err
 		}
 		for _, cached := range events {
+			if err := requestCtx.Err(); err != nil {
+				return nil, err
+			}
 			if cached == nil || cached.TenantId != r.TenantId {
 				continue
 			}
@@ -162,9 +178,12 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 
 			matchSilence, loaded := silenceMatchers[event.FaultCenterId]
 			if !loaded {
-				rules, err := e.ctx.Redis.Silence().ListAlertMutes(r.TenantId, event.FaultCenterId)
+				rules, err := e.ctx.Redis.Silence().ListAlertMutesContext(requestCtx, r.TenantId, event.FaultCenterId)
 				if err != nil {
 					return nil, fmt.Errorf("读取静默状态失败: %w", err)
+				}
+				if err := requestCtx.Err(); err != nil {
+					return nil, err
 				}
 				matchSilence, err = mute.CompileSnapshotChecked(rules, curTime.Unix())
 				if err != nil {
@@ -190,7 +209,10 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			selector.offer(view)
 		}
 	}
-	return types.ResponseAlertCurEventList{
+	if err := requestCtx.Err(); err != nil {
+		return nil, err
+	}
+	result := types.ResponseAlertCurEventList{
 		List:    selector.page(offset),
 		Summary: summary.finish(),
 		Page: models.Page{
@@ -198,7 +220,11 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			Index: r.Page.Index,
 			Size:  r.Page.Size,
 		},
-	}, nil
+	}
+	if err := requestCtx.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func matchQuery(event models.AlertCurEvent, query string) bool {

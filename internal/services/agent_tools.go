@@ -77,11 +77,11 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 
 	switch tool {
 	case "alerts.search":
-		return a.searchAlerts(arguments, claims)
+		return a.searchAlerts(requestCtx, arguments, claims)
 	case "alerts.get":
-		return a.getAlert(arguments, claims)
+		return a.getAlert(requestCtx, arguments, claims)
 	case "alerts.related":
-		return a.relatedAlerts(arguments, claims)
+		return a.relatedAlerts(requestCtx, arguments, claims)
 	case "incidents.get":
 		return a.getIncident(arguments, claims.TenantId)
 	case "rules.get":
@@ -103,7 +103,7 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 	}
 }
 
-func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
+func (a *agentToolService) searchAlerts(requestCtx context.Context, arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	var request types.RequestAlertCurEventQuery
 	if err := decodeAgentArguments(arguments, &request); err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims
 	request.AgentEnvironmentLabelKey = claims.EnvironmentLabelKey
 	request.AgentEnvironments = claims.Environments
 	request.Page = safeAgentPage(request.Page)
-	data, err := EventService.ListCurrentEvent(&request)
+	data, err := EventService.ListCurrentEventContext(requestCtx, &request)
 	if err != nil {
 		return nil, err.(error)
 	}
@@ -126,12 +126,12 @@ func (a *agentToolService) searchAlerts(arguments map[string]interface{}, claims
 	return response, nil
 }
 
-func (a *agentToolService) getAlert(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
+func (a *agentToolService) getAlert(requestCtx context.Context, arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	fingerprint := stringArgument(arguments, "fingerprint")
 	if fingerprint == "" {
 		return nil, fmt.Errorf("fingerprint 不能为空")
 	}
-	data, err := a.searchAlerts(map[string]interface{}{
+	data, err := a.searchAlerts(requestCtx, map[string]interface{}{
 		"fingerprint": fingerprint, "faultCenterId": stringArgument(arguments, "faultCenterId"),
 		"includeRecovered": true, "index": 1, "size": 2,
 	}, claims)
@@ -148,12 +148,12 @@ func (a *agentToolService) getAlert(arguments map[string]interface{}, claims age
 	return result, nil
 }
 
-func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
+func (a *agentToolService) relatedAlerts(requestCtx context.Context, arguments map[string]interface{}, claims agenttoken.Claims) (interface{}, error) {
 	fingerprint := stringArgument(arguments, "fingerprint")
 	if fingerprint == "" {
 		return nil, fmt.Errorf("fingerprint 不能为空")
 	}
-	baseData, err := a.getAlert(arguments, claims)
+	baseData, err := a.getAlert(requestCtx, arguments, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (a *agentToolService) relatedAlerts(arguments map[string]interface{}, claim
 		return base, nil
 	}
 	event := base.List[0]
-	allData, err := a.searchAlerts(map[string]interface{}{"faultCenterId": event.FaultCenterId, "index": 1, "size": 50}, claims)
+	allData, err := a.searchAlerts(requestCtx, map[string]interface{}{"faultCenterId": event.FaultCenterId, "index": 1, "size": 50}, claims)
 	if err != nil {
 		return nil, err
 	}

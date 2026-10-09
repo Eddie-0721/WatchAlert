@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"testing"
 	"watchAlert/internal/cache"
 	appctx "watchAlert/internal/ctx"
@@ -11,6 +12,10 @@ import (
 )
 
 type eventFixtureCenters struct{ repo.InterFaultCenterRepo }
+
+func (f eventFixtureCenters) ListIdentities(_ context.Context, tenant string) ([]models.FaultCenter, error) {
+	return f.List(tenant, "")
+}
 
 func (eventFixtureCenters) List(string, string) ([]models.FaultCenter, error) {
 	return []models.FaultCenter{{ID: "fc"}, {ID: "fc2"}}, nil
@@ -29,7 +34,15 @@ func (e eventFixtureAlerts) GetAllEvents(key models.AlertEventCacheKey) (map[str
 	return e.events[key], nil
 }
 
+func (e eventFixtureAlerts) GetAllEventsContext(_ context.Context, key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error) {
+	return e.GetAllEvents(key)
+}
+
 type eventFixtureMutes struct{ cache.SilenceCacheInterface }
+
+func (e eventFixtureMutes) ListAlertMutesContext(_ context.Context, tenant, center string) ([]models.AlertSilences, error) {
+	return e.ListAlertMutes(tenant, center)
+}
 
 func (eventFixtureMutes) GetAlertMutes(string, string) ([]string, error) { return nil, nil }
 func (eventFixtureMutes) ListAlertMutes(string, string) ([]models.AlertSilences, error) {
@@ -74,7 +87,7 @@ func TestAgentEventIdentityAndScope(t *testing.T) {
 		{"dev", "fc", false}, {"foreign_source", "fc", false}, {"foreign_tenant", "fc", false},
 	} {
 		t.Run(tc.fp+"_"+tc.center, func(t *testing.T) {
-			data, err := service.getAlert(map[string]interface{}{"fingerprint": tc.fp, "faultCenterId": tc.center}, claims)
+			data, err := service.getAlert(context.Background(), map[string]interface{}{"fingerprint": tc.fp, "faultCenterId": tc.center}, claims)
 			if (err == nil) != tc.ok {
 				t.Fatal("incorrect identity/scope", err)
 			}
@@ -86,7 +99,7 @@ func TestAgentEventIdentityAndScope(t *testing.T) {
 			}
 		})
 	}
-	related, err := service.relatedAlerts(map[string]interface{}{"fingerprint": "wanted", "faultCenterId": "fc"}, claims)
+	related, err := service.relatedAlerts(context.Background(), map[string]interface{}{"fingerprint": "wanted", "faultCenterId": "fc"}, claims)
 	if err != nil {
 		t.Fatal(err)
 	}

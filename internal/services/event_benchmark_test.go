@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -19,6 +20,10 @@ type benchmarkSilences struct {
 
 func (s benchmarkSilences) ListAlertMutes(string, string) ([]models.AlertSilences, error) {
 	return s.rules, nil
+}
+
+func (s benchmarkSilences) ListAlertMutesContext(_ context.Context, tenant, center string) ([]models.AlertSilences, error) {
+	return s.ListAlertMutes(tenant, center)
 }
 
 type benchmarkEventCache struct {

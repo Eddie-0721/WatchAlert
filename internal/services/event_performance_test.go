@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -17,6 +18,10 @@ type countedSilences struct {
 	err     error
 	now     int64
 	invalid bool
+}
+
+func (s *countedSilences) ListAlertMutesContext(_ context.Context, tenant, center string) ([]models.AlertSilences, error) {
+	return s.ListAlertMutes(tenant, center)
 }
 
 func (s *countedSilences) ListAlertMutes(tenant, center string) ([]models.AlertSilences, error) {

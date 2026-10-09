@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"gorm.io/gorm"
 	"watchAlert/internal/models"
 )
@@ -15,6 +16,7 @@ type (
 		Update(params models.FaultCenter) error
 		Delete(tenantId, id string) error
 		List(tenantId, query string) ([]models.FaultCenter, error)
+		ListIdentities(context.Context, string) ([]models.FaultCenter, error)
 		Get(tenantId, id, name string) (models.FaultCenter, error)
 		Reset(tenantId, id, name, description, aggregationType string) error
 	}
@@ -66,6 +68,13 @@ func (f faultCenterRepo) Delete(tenantId, id string) error {
 		return err
 	}
 	return nil
+}
+
+// ListIdentities avoids loading routing/notification configuration for event lists.
+func (f faultCenterRepo) ListIdentities(ctx context.Context, tenantID string) ([]models.FaultCenter, error) {
+	var centers []models.FaultCenter
+	err := f.db.WithContext(ctx).Model(&models.FaultCenter{}).Select("id", "name").Where("tenant_id = ?", tenantID).Find(&centers).Error
+	return centers, err
 }
 
 func (f faultCenterRepo) List(tenantId, query string) ([]models.FaultCenter, error) {

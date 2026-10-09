@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"github.com/bytedance/sonic"
 	"github.com/go-redis/redis"
@@ -22,6 +23,7 @@ type (
 		RemoveAlertMute(tenantId, faultCenterId, id string) error
 		GetAlertMutes(tenantId, faultCenterId string) ([]string, error)
 		ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error)
+		ListAlertMutesContext(context.Context, string, string) ([]models.AlertSilences, error)
 		ListSilenceSnapshots(tenantId, faultCenterId string) ([]SilenceSnapshot, error)
 		CompareAndSwapSilenceStatus(SilenceSnapshot, int) (bool, error)
 		WithIdGetMuteFromCache(tenantId, faultCenterId, id string) (*models.AlertSilences, error)
@@ -55,13 +57,23 @@ func (sc *SilenceCache) RemoveAlertMute(tenantId, faultCenterId, id string) erro
 
 // ListAlertMutes reads a request-local snapshot with one Redis command.
 func (sc *SilenceCache) ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error) {
-	snapshots, err := sc.ListSilenceSnapshots(tenantId, faultCenterId)
+	return sc.ListAlertMutesContext(context.Background(), tenantId, faultCenterId)
+}
+
+func (sc *SilenceCache) ListAlertMutesContext(ctx context.Context, tenantId, faultCenterId string) ([]models.AlertSilences, error) {
+	snapshots, err := sc.listSilenceSnapshotsContext(ctx, tenantId, faultCenterId)
 	if err != nil {
 		return nil, err
 	}
 	rules := make([]models.AlertSilences, 0, len(snapshots))
 	for _, snapshot := range snapshots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rules = append(rules, snapshot.Rule)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return rules, nil
 }
@@ -75,13 +87,26 @@ type SilenceSnapshot struct {
 }
 
 func (sc *SilenceCache) ListSilenceSnapshots(tenantID, centerID string) ([]SilenceSnapshot, error) {
+	return sc.listSilenceSnapshotsContext(context.Background(), tenantID, centerID)
+}
+
+func (sc *SilenceCache) listSilenceSnapshotsContext(ctx context.Context, tenantID, centerID string) ([]SilenceSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	key := models.BuildAlertMuteCacheKey(tenantID, centerID)
 	mapping, err := sc.getRedisAllHashMap(key)
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	snapshots := make([]SilenceSnapshot, 0, len(mapping))
 	for field, raw := range mapping {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var rule models.AlertSilences
 		if err := sonic.UnmarshalString(raw, &rule); err != nil {
 			return nil, err
@@ -90,6 +115,9 @@ func (sc *SilenceCache) ListSilenceSnapshots(tenantID, centerID string) ([]Silen
 			return nil, fmt.Errorf("invalid silence cache identity")
 		}
 		snapshots = append(snapshots, SilenceSnapshot{Rule: rule, key: key, field: field, raw: raw})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return snapshots, nil
 }

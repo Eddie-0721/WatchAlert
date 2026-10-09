@@ -31,6 +31,7 @@ type (
 		RemoveAlertEvent(tenantId, faultCenterId, fingerprint string)
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
+		GetAllEventsContext(context.Context, models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)
 		GetRuleEvents(context.Context, models.AlertEventCacheKey, string, string) (map[string]*models.AlertCurEvent, error)
 		GetEventFromCache(tenantId, faultCenterId, fingerprint string) (models.AlertCurEvent, error)
 	}
@@ -56,24 +57,45 @@ func (a *AlertCache) RemoveAlertEvent(tenantId, faultCenterId, fingerprint strin
 
 // GetAllEvents 获取故障中心的所有事件
 func (a *AlertCache) GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error) {
+	return a.GetAllEventsContext(context.Background(), key)
+}
+
+// Redis v6 cannot interrupt an in-flight socket read through WithContext.
+// Check cancellation before I/O, after it, and during decoding instead.
+func (a *AlertCache) GetAllEventsContext(ctx context.Context, key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.RLock()
 	defer a.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	result, err := a.getEventCacheHashAll(key)
 	if err != nil {
 		return nil, err
 	}
 
-	events := make(map[string]*models.AlertCurEvent)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	events := make(map[string]*models.AlertCurEvent, len(result))
 	for fingerprint, eventJSON := range result {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var event models.AlertCurEvent
-		if err := sonic.Unmarshal([]byte(eventJSON), &event); err != nil {
+		if err := sonic.UnmarshalString(eventJSON, &event); err != nil {
 			logc.Error(context.Background(), fmt.Sprintf("unmarshal event json error: %s, event json: %s", err.Error(), eventJSON))
 			continue
 		}
 		events[fingerprint] = &event
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return events, nil
 }
 

@@ -94,7 +94,7 @@ func (alertEventController alertEventController) ListCurrentEvent(ctx *gin.Conte
 	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.EventService.ListCurrentEvent(r)
+		return services.EventService.ListCurrentEventContext(ctx.Request.Context(), r)
 	})
 }
 
