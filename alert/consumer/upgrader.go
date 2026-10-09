@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"context"
 	"fmt"
 	"time"
 	"watchAlert/alert/mute"
@@ -19,7 +20,10 @@ type AggregatedAlert struct {
 }
 
 // alarmUpgrade 处理告警升级主入口
-func alarmUpgrade(ctx *ctx.Context, faultCenter models.FaultCenter, alerts map[string]*models.AlertCurEvent) error {
+func alarmUpgrade(requestCtx context.Context, ctx *ctx.Context, faultCenter models.FaultCenter, alerts map[string]*models.AlertCurEvent) error {
+	if err := requestCtx.Err(); err != nil {
+		return err
+	}
 	currentTime := time.Now().Unix()
 	if !faultCenter.GetIsUpgradeEnabled() {
 		return nil
@@ -34,6 +38,9 @@ func alarmUpgrade(ctx *ctx.Context, faultCenter models.FaultCenter, alerts map[s
 	confirmAggregated := createAggregatedAlert(models.ConfirmStatus, faultCenter)
 	// 遍历事件并处理升级阶段
 	for _, event := range filterAlerts {
+		if err := requestCtx.Err(); err != nil {
+			return err
+		}
 		// 确认阶段
 		if !event.ConfirmState.IsOk {
 			if err := processStage(ctx, faultCenter, event, currentTime, confirmAggregated, models.ConfirmStatus); err != nil {
@@ -43,7 +50,7 @@ func alarmUpgrade(ctx *ctx.Context, faultCenter models.FaultCenter, alerts map[s
 	}
 
 	if confirmAggregated != nil {
-		sendIfNotEmpty(ctx, faultCenter, confirmAggregated)
+		return sendIfNotEmpty(requestCtx, ctx, faultCenter, confirmAggregated)
 	}
 
 	return nil
@@ -156,9 +163,9 @@ func setLastNoticeTime(ctx *ctx.Context, alert *models.AlertCurEvent, currentTim
 }
 
 // sendIfNotEmpty 检查聚合告警是否不为空，如果不为空则发送
-func sendIfNotEmpty(ctx *ctx.Context, faultCenter models.FaultCenter, aggregated *AggregatedAlert) {
+func sendIfNotEmpty(requestCtx context.Context, ctx *ctx.Context, faultCenter models.FaultCenter, aggregated *AggregatedAlert) error {
 	if len(aggregated.Events) == 0 {
-		return
+		return nil
 	}
 
 	// 仅保留第一个事件发送
@@ -167,13 +174,11 @@ func sendIfNotEmpty(ctx *ctx.Context, faultCenter models.FaultCenter, aggregated
 		aggregated.Events = aggregated.Events[:1]
 	}
 
-	if err := sendAggregatedAlert(ctx, faultCenter, aggregated); err != nil {
-		logc.Error(ctx.Ctx, fmt.Errorf("send aggregated confirm alert failed: %w", err))
-	}
+	return sendAggregatedAlert(requestCtx, ctx, faultCenter, aggregated)
 }
 
 // sendAggregatedAlert 发送聚合后的告警函数
-func sendAggregatedAlert(ctx *ctx.Context, faultCenter models.FaultCenter, aggregated *AggregatedAlert) error {
+func sendAggregatedAlert(requestCtx context.Context, ctx *ctx.Context, faultCenter models.FaultCenter, aggregated *AggregatedAlert) error {
 	noticeId := faultCenter.GetUpgradeNoticeId()
 	if noticeId == "" {
 		return nil
@@ -183,7 +188,7 @@ func sendAggregatedAlert(ctx *ctx.Context, faultCenter models.FaultCenter, aggre
 		aggregated.Fingerprints,
 		aggregated.Timeout))
 
-	return handleAlert(ctx, "upgrade", faultCenter, noticeId, aggregated.Events)
+	return handleAlert(requestCtx, ctx, "upgrade", faultCenter, noticeId, aggregated.Events)
 }
 
 // getContent 生成聚合通知内容

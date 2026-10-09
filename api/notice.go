@@ -172,6 +172,6 @@ func (noticeController noticeController) Test(ctx *gin.Context) {
 	}
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.NoticeService.Test(r)
+		return services.NoticeService.Test(ctx.Request.Context(), r)
 	})
 }

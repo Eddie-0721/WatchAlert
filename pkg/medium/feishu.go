@@ -2,10 +2,10 @@ package medium
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -37,7 +37,7 @@ var FeiShuTestContent = fmt.Sprintf(`{
 func NewFeiShuSender() SendInter { return &FeiShuSender{} }
 
 func (f *FeiShuSender) Send(params SendParams) error {
-	return f.post(params.Hook, params.Sign, params.GetSendMsg())
+	return f.postContext(params.Context(), params.Hook, params.Sign, params.GetSendMsg())
 }
 
 func (f *FeiShuSender) Test(params SendParams) error {
@@ -48,10 +48,14 @@ func (f *FeiShuSender) Test(params SendParams) error {
 		return err
 	}
 
-	return f.post(params.Hook, params.Sign, msg)
+	return f.postContext(params.Context(), params.Hook, params.Sign, msg)
 }
 
 func (f *FeiShuSender) post(hook, sign string, msg map[string]any) error {
+	return f.postContext(context.Background(), hook, sign, msg)
+}
+
+func (f *FeiShuSender) postContext(requestCtx context.Context, hook, sign string, msg map[string]any) error {
 	if sign != "" {
 		signature, timestamp := generateFeishuSignature(sign)
 		msg["sign"] = signature
@@ -59,21 +63,11 @@ func (f *FeiShuSender) post(hook, sign string, msg map[string]any) error {
 	}
 
 	msgByte := bytes.NewReader(tools.JsonMarshalToByte(msg))
-	res, err := tools.Post(nil, hook, msgByte, 10)
+	res, err := tools.PostContext(requestCtx, nil, hook, msgByte, 10)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	var response FeiShuResponse
-	if err := tools.ParseReaderBody(res.Body, &response); err != nil {
-		return errors.New(fmt.Sprintf("Error unmarshalling Feishu response: %s", err.Error()))
-	}
-	if response.Code != 0 {
-		return errors.New(response.Msg)
-	}
-
-	return nil
+	return checkRobotResponse(res, "code")
 }
 
 // generateFeishuSignature 生成 Feishu 签名

@@ -1,7 +1,7 @@
 package medium
 
 import (
-	"crypto/tls"
+	"context"
 	"errors"
 	"fmt"
 	"net/smtp"
@@ -42,34 +42,28 @@ func (e *EmailSender) Send(params SendParams) error {
 	} else {
 		params.Email.Subject = params.Email.Subject + "「报警中」"
 	}
-	err := e.post(params.Email.To, params.Email.CC, params.Email.Subject, []byte(params.Content))
+	err := e.postContext(params.Context(), params.Email.To, params.Email.CC, params.Email.Subject, []byte(params.Content))
 	if err != nil {
-		return fmt.Errorf("%s, %s", err.Error(), "Content: "+params.Content)
+		return fmt.Errorf("send email: %w", err)
 	}
 
 	return nil
 }
 
 func (e *EmailSender) Test(params SendParams) error {
-	return e.post(params.Email.To, params.Email.CC, "WatchAlert 消息测试", []byte(RobotTestContent))
+	return e.postContext(params.Context(), params.Email.To, params.Email.CC, "WatchAlert 消息测试", []byte(RobotTestContent))
 }
 
 func (e *EmailSender) post(to, cc []string, subject string, msg []byte) error {
-	e.Email.To = to
-	e.Email.Cc = cc
-	e.Email.HTML = msg
-	e.Email.Subject = subject
+	return e.postContext(context.Background(), to, cc, subject, msg)
+}
 
-	addr := fmt.Sprintf("%s:%d", e.ServerAddr, e.Port)
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: false,
-		ServerName:         e.ServerAddr,
-	}
-
-	// 如果端口是 465，使用标准的 SSL/TLS 加密
-	if e.Port == 465 {
-		return e.Email.SendWithTLS(addr, e.Auth, tlsConfig)
-	}
-
-	return e.Email.Send(addr, e.Auth)
+func (e *EmailSender) postContext(requestCtx context.Context, to, cc []string, subject string, msg []byte) error {
+	// Keep per-send fields local, including when a sender is reused.
+	message := *e.Email
+	message.To = to
+	message.Cc = cc
+	message.HTML = msg
+	message.Subject = subject
+	return sendSMTP(requestCtx, e.ServerAddr, e.Port, e.Auth, &message)
 }

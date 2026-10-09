@@ -2,9 +2,8 @@ package medium
 
 import (
 	"bytes"
-	"errors"
+	"context"
 	"fmt"
-	"io"
 	"watchAlert/pkg/tools"
 )
 
@@ -20,28 +19,22 @@ var SREFlowTestContent = fmt.Sprintf(`{
 func NewSREFlowSender() SendInter { return &SREFlowSender{} }
 
 func (w *SREFlowSender) Send(params SendParams) error {
-	return w.post(params.Hook, params.Headers, params.Content)
+	return w.postContext(params.Context(), params.Hook, params.Headers, params.Content)
 }
 
 func (w *SREFlowSender) Test(params SendParams) error {
-	return w.post(params.Hook, params.Headers, SREFlowTestContent)
+	return w.postContext(params.Context(), params.Hook, params.Headers, SREFlowTestContent)
 }
 
 func (w *SREFlowSender) post(hook string, headers map[string]string, content string) error {
-	res, err := tools.Post(headers, hook, bytes.NewReader([]byte(content)), 10)
+	return w.postContext(context.Background(), hook, headers, content)
+}
+
+func (w *SREFlowSender) postContext(requestCtx context.Context, hook string, headers map[string]string, content string) error {
+	res, err := tools.PostContext(requestCtx, headers, hook, bytes.NewReader([]byte(content)), 10)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		bodyByte, err := io.ReadAll(res.Body)
-		if err != nil {
-			return fmt.Errorf("读取 Body 失败, err: %s", err.Error())
-		}
-		return errors.New(string(bodyByte))
-	}
-
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
-	return nil
+	_, err = readNotificationResponse(res)
+	return err
 }

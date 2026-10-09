@@ -2,7 +2,7 @@ package medium
 
 import (
 	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"watchAlert/pkg/tools"
 )
@@ -27,27 +27,21 @@ var WechatTestContent = fmt.Sprintf(`{
 func NewWeChatSender() SendInter { return &WeChatSender{} }
 
 func (w *WeChatSender) Send(params SendParams) error {
-	return w.post(params.Hook, params.Content)
+	return w.postContext(params.Context(), params.Hook, params.Content)
 }
 
 func (w *WeChatSender) Test(params SendParams) error {
-	return w.post(params.Hook, WechatTestContent)
+	return w.postContext(params.Context(), params.Hook, WechatTestContent)
 }
 
 func (w *WeChatSender) post(hook, content string) error {
-	res, err := tools.Post(nil, hook, bytes.NewReader([]byte(content)), 10)
+	return w.postContext(context.Background(), hook, content)
+}
+
+func (w *WeChatSender) postContext(requestCtx context.Context, hook, content string) error {
+	res, err := tools.PostContext(requestCtx, nil, hook, bytes.NewReader([]byte(content)), 10)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	var response WeChatResponse
-	if err := tools.ParseReaderBody(res.Body, &response); err != nil {
-		return errors.New(fmt.Sprintf("Error unmarshalling Feishu response: %s", err.Error()))
-	}
-	if response.Code != 0 {
-		return errors.New(response.Msg)
-	}
-
-	return nil
+	return checkRobotResponse(res, "errcode")
 }

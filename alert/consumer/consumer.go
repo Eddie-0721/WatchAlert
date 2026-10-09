@@ -12,7 +12,6 @@ import (
 	"watchAlert/internal/models"
 
 	"github.com/zeromicro/go-zero/core/logc"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -153,7 +152,9 @@ func (c *Consume) Watch(ctx context.Context, faultCenter models.FaultCenter) {
 			// 获取调用栈信息
 			stack := debug.Stack()
 			logc.Error(c.ctx.Ctx, fmt.Sprintf("Recovered from consumer watch goroutine panic: %s, FaultCenterName: %s, Id: %s\n%s", r, faultCenter.Name, faultCenter.ID, stack))
-			c.Restart(faultCenter)
+			if ctx.Err() == nil {
+				c.Restart(faultCenter)
+			}
 		}
 	}()
 
@@ -195,9 +196,9 @@ func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.Fau
 	}
 	c.alarmGrouping(faultCenter, &alertGroups, filterEvents)
 	// 发送事件
-	c.sendAlerts(faultCenter, &alertGroups)
+	c.sendAlerts(requestCtx, faultCenter, &alertGroups)
 	// 处理告警升级
-	err = alarmUpgrade(c.ctx, faultCenter, data)
+	err = alarmUpgrade(requestCtx, c.ctx, faultCenter, data)
 	if err != nil {
 		logc.Error(c.ctx.Ctx, fmt.Sprintf("process alarm upgeade fail, err: %s", err.Error()))
 	}
@@ -262,23 +263,23 @@ func (c *Consume) alarmGrouping(faultCenter models.FaultCenter, alertGroups *Ale
 }
 
 // sendAlerts 发送告警
-func (c *Consume) sendAlerts(faultCenter models.FaultCenter, aggEvents *AlertGroups) {
+func (c *Consume) sendAlerts(requestCtx context.Context, faultCenter models.FaultCenter, aggEvents *AlertGroups) {
 	c.RLock()
 	defer c.RUnlock()
 
 	for _, rule := range aggEvents.Rules {
 		for _, groups := range rule.Groups {
-			c.processAlertGroup(faultCenter, groups.NoticeID, groups.Events)
+			if requestCtx.Err() != nil {
+				return
+			}
+			c.processAlertGroup(requestCtx, faultCenter, groups.NoticeID, groups.Events)
 		}
 	}
 }
 
 // processAlertGroup 处理告警组
-func (c *Consume) processAlertGroup(faultCenter models.FaultCenter, noticeId string, alerts []*models.AlertCurEvent) {
-	g := new(errgroup.Group)
-	g.Go(func() error { return handleAlert(c.ctx, "alarm", faultCenter, noticeId, alerts) })
-
-	if err := g.Wait(); err != nil {
+func (c *Consume) processAlertGroup(requestCtx context.Context, faultCenter models.FaultCenter, noticeId string, alerts []*models.AlertCurEvent) {
+	if err := handleAlert(requestCtx, c.ctx, "alarm", faultCenter, noticeId, alerts); err != nil {
 		logc.Errorf(c.ctx.Ctx, "Alert group processing failed: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package medium
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -16,6 +17,8 @@ import (
 type (
 	// SendParams 定义发送参数
 	SendParams struct {
+		// RequestContext is local execution state, never notification payload.
+		RequestContext context.Context `json:"-"`
 		// 基础
 		TenantId string
 		EventId  string
@@ -52,8 +55,21 @@ type (
 
 const RobotTestContent = "这是一条来自 WatchAlert 的测试消息"
 
+func (s SendParams) Context() context.Context {
+	if s.RequestContext != nil {
+		return s.RequestContext
+	}
+	return context.Background()
+}
+
 // Sender 发送通知的主函数
 func Sender(ctx *ctx.Context, sendParams SendParams) error {
+	if sendParams.RequestContext == nil {
+		sendParams.RequestContext = ctx.Ctx
+	}
+	if err := sendParams.Context().Err(); err != nil {
+		return err
+	}
 	// 根据通知类型获取对应的发送器
 	sender, err := senderFactory(sendParams.NoticeType)
 	if err != nil {
@@ -63,17 +79,23 @@ func Sender(ctx *ctx.Context, sendParams SendParams) error {
 	// 发送通知
 	if err := sender.Send(sendParams); err != nil {
 		addRecord(ctx, sendParams, 1, sendParams.Content, err.Error())
-		return fmt.Errorf("Send alarm failed to %s, err: %s", sendParams.NoticeType, err.Error())
+		return fmt.Errorf("Send alarm failed to %s: %w", sendParams.NoticeType, err)
 	}
 
 	// 记录成功发送的日志
 	addRecord(ctx, sendParams, 0, sendParams.Content, "success")
-	logc.Info(ctx.Ctx, fmt.Sprintf("Send alarm ok, msg: %s", sendParams.Content))
+	logc.Infof(ctx.Ctx, "Send alarm ok, eventId: %s, noticeId: %s, channel: %s", sendParams.EventId, sendParams.NoticeId, sendParams.NoticeType)
 	return nil
 }
 
 // Tester 发送测试消息
 func Tester(ctx *ctx.Context, sendParams SendParams) error {
+	if sendParams.RequestContext == nil {
+		sendParams.RequestContext = ctx.Ctx
+	}
+	if err := sendParams.Context().Err(); err != nil {
+		return err
+	}
 	sender, err := senderFactory(sendParams.NoticeType)
 	if err != nil {
 		return fmt.Errorf("Send alarm failed, %s", err.Error())
@@ -81,7 +103,7 @@ func Tester(ctx *ctx.Context, sendParams SendParams) error {
 
 	// 发送通知
 	if err := sender.Test(sendParams); err != nil {
-		return fmt.Errorf("Test alarm failed to %s, err: %s", sendParams.NoticeType, err.Error())
+		return fmt.Errorf("Test alarm failed to %s: %w", sendParams.NoticeType, err)
 	}
 
 	return nil

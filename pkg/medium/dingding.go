@@ -2,6 +2,7 @@ package medium
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -31,35 +32,29 @@ var DingTestContent = fmt.Sprintf(`{
 func NewDingSender() SendInter { return &DingDingSender{} }
 
 func (d *DingDingSender) Send(params SendParams) error {
-	return d.post(params.Hook, params.Sign, params.Content)
+	return d.postContext(params.Context(), params.Hook, params.Sign, params.Content)
 }
 
 func (d *DingDingSender) Test(params SendParams) error {
-	return d.post(params.Hook, params.Sign, DingTestContent)
+	return d.postContext(params.Context(), params.Hook, params.Sign, DingTestContent)
 }
 
 func (d *DingDingSender) post(hook, sign, content string) error {
+	return d.postContext(context.Background(), hook, sign, content)
+}
+
+func (d *DingDingSender) postContext(requestCtx context.Context, hook, sign, content string) error {
 	if sign != "" {
 		signature, timestamp := generateDingSignature(sign)
 		hook = fmt.Sprintf("%s&timestamp=%s&sign=%s", hook, timestamp, signature)
 	}
 
 	cardContentByte := bytes.NewReader([]byte(content))
-	res, err := tools.Post(nil, hook, cardContentByte, 10)
+	res, err := tools.PostContext(requestCtx, nil, hook, cardContentByte, 10)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	var response DingResponse
-	if err := tools.ParseReaderBody(res.Body, &response); err != nil {
-		return fmt.Errorf("Error unmarshalling Dingding response: %s", err.Error())
-	}
-	if response.Code != 0 {
-		return fmt.Errorf("%v", response.Msg)
-	}
-
-	return nil
+	return checkRobotResponse(res, "errcode")
 }
 
 // generateDingSignature 生成 Ding 签名

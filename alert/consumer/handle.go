@@ -1,6 +1,8 @@
 package consumer
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,7 +20,10 @@ import (
 )
 
 // handleAlert 处理告警逻辑
-func handleAlert(ctx *ctx.Context, processType string, faultCenter models.FaultCenter, noticeId string, alerts []*models.AlertCurEvent) error {
+func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType string, faultCenter models.FaultCenter, noticeId string, alerts []*models.AlertCurEvent) error {
+	if err := requestCtx.Err(); err != nil {
+		return err
+	}
 	curTime := time.Now().Unix()
 	g := new(errgroup.Group)
 
@@ -45,6 +50,8 @@ func handleAlert(ctx *ctx.Context, processType string, faultCenter models.FaultC
 
 	for severity, events := range aggregationEvents {
 		g.Go(func() error {
+			// Retain one failure, not one allocated error per event in a flood.
+			var firstSendError error
 			if events == nil {
 				return nil
 			}
@@ -52,6 +59,9 @@ func handleAlert(ctx *ctx.Context, processType string, faultCenter models.FaultC
 			// 获取当前事件等级对应的路由配置
 			routes := getNoticeRoutes(noticeData, severity)
 			for _, event := range events {
+				if err := requestCtx.Err(); err != nil {
+					return errors.Join(firstSendError, err)
+				}
 				if event.Fingerprint == "" {
 					continue
 				}
@@ -76,6 +86,9 @@ func handleAlert(ctx *ctx.Context, processType string, faultCenter models.FaultC
 				}
 
 				for _, route := range routes {
+					if err := requestCtx.Err(); err != nil {
+						return errors.Join(firstSendError, err)
+					}
 					// 设置值班用户信息
 					dutyUsers := getDutyUsers(ctx, noticeData, route.NoticeType)
 					event.DutyUser = strings.Join(dutyUsers, " ")
@@ -111,29 +124,33 @@ func handleAlert(ctx *ctx.Context, processType string, faultCenter models.FaultC
 
 					// 发送告警
 					err := mediums.Sender(ctx, mediums.SendParams{
-						TenantId:    event.TenantId,
-						EventId:     event.EventId,
-						RuleName:    event.RuleName,
-						Severity:    event.Severity,
-						NoticeType:  route.NoticeType,
-						NoticeId:    noticeId,
-						NoticeName:  noticeData.Name,
-						IsRecovered: event.IsRecovered,
-						Hook:        route.Hook,
-						Headers:     route.Headers,
-						Email:       email,
-						Phone:       phone,
-						SMS:         sms,
-						Content:     content,
-						Sign:        route.Sign,
+						RequestContext: requestCtx,
+						TenantId:       event.TenantId,
+						EventId:        event.EventId,
+						RuleName:       event.RuleName,
+						Severity:       event.Severity,
+						NoticeType:     route.NoticeType,
+						NoticeId:       noticeId,
+						NoticeName:     noticeData.Name,
+						IsRecovered:    event.IsRecovered,
+						Hook:           route.Hook,
+						Headers:        route.Headers,
+						Email:          email,
+						Phone:          phone,
+						SMS:            sms,
+						Content:        content,
+						Sign:           route.Sign,
 					})
 					if err != nil {
 						logc.Error(ctx.Ctx, fmt.Sprintf("Failed to send alert: %v", err))
+						if firstSendError == nil {
+							firstSendError = err
+						}
 					}
 				}
 			}
 
-			return nil
+			return firstSendError
 		})
 	}
 

@@ -25,7 +25,7 @@ type InterNoticeService interface {
 	ListRecord(context.Context, interface{}) (interface{}, interface{})
 	GetRecordMetric(req interface{}) (interface{}, interface{})
 	DeleteRecord(req interface{}) (interface{}, interface{})
-	Test(req interface{}) (interface{}, interface{})
+	Test(context.Context, interface{}) (interface{}, interface{})
 }
 
 func newInterAlertNoticeService(ctx *ctx.Context) InterNoticeService {
@@ -175,7 +175,7 @@ func (n noticeService) GetRecordMetric(req interface{}) (interface{}, interface{
 	}, nil
 }
 
-func (n noticeService) Test(req interface{}) (interface{}, interface{}) {
+func (n noticeService) Test(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestNoticeTest)
 	var errList []struct {
 		Hook  string
@@ -183,13 +183,14 @@ func (n noticeService) Test(req interface{}) (interface{}, interface{}) {
 	}
 
 	err := mediums.Tester(n.ctx, mediums.SendParams{
-		NoticeType: r.NoticeType,
-		Hook:       r.Hook,
-		Headers:    r.Headers,
-		Email:      r.Email,
-		Phone:      r.Phone,
-		SMS:        r.SMS,
-		Sign:       r.Sign,
+		RequestContext: requestCtx,
+		NoticeType:     r.NoticeType,
+		Hook:           r.Hook,
+		Headers:        r.Headers,
+		Email:          r.Email,
+		Phone:          r.Phone,
+		SMS:            r.SMS,
+		Sign:           r.Sign,
 	})
 	if err != nil {
 		errList = append(errList, struct {
