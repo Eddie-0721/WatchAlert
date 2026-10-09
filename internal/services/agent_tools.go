@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/internal/types"
@@ -58,7 +59,7 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 			Operation:  operation,
 			Status:     status,
 			Input:      string(input),
-			Result:     truncateToolResult(string(output)),
+			Result:     truncateToolResult(output),
 			Error:      callError,
 			DurationMs: time.Since(started).Milliseconds(),
 			CreatedAt:  time.Now().Unix(),
@@ -433,10 +434,16 @@ func containsTool(tools []string, candidate string) bool {
 	return false
 }
 
-func truncateToolResult(value string) string {
+// Marshal produces valid UTF-8. Copy only the retained prefix, and never
+// persist a partial UTF-8 character at the byte budget boundary.
+func truncateToolResult(value []byte) string {
 	const max = 32 * 1024
 	if len(value) <= max {
-		return value
+		return string(value)
 	}
-	return value[:max] + "…"
+	end := max
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return string(value[:end]) + "…"
 }
