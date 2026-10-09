@@ -79,7 +79,7 @@ func (agentController agentController) GetSession(ctx *gin.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return services.AgentService.GetSession(tenantId, userId, r.SessionId)
+		return services.AgentService.GetSession(ctx.Request.Context(), tenantId, userId, r)
 	})
 }
 

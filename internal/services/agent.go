@@ -28,7 +28,7 @@ type agentService struct {
 type InterAgentService interface {
 	Diagnostics(context.Context, string, string) (AgentDiagnostics, error)
 	CreateSession(tenantId, userId string, req *types.RequestAgentSessionCreate) (models.AgentSession, error)
-	GetSession(tenantId, userId, sessionId string) (types.ResponseAgentSessionDetail, error)
+	GetSession(context.Context, string, string, *types.RequestAgentSessionQuery) (types.ResponseAgentSessionDetail, error)
 	ListSessions(tenantId, userId string) ([]models.AgentSession, error)
 	Capabilities(tenantId, userId string) (types.AgentCapabilities, error)
 	SendMessage(ctx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage) (models.AgentMessage, error)
@@ -126,47 +126,6 @@ func (a *agentService) CreateSession(tenantId, userId string, req *types.Request
 		return session, err
 	}
 	return session, nil
-}
-
-func (a *agentService) GetSession(tenantId, userId, sessionId string) (types.ResponseAgentSessionDetail, error) {
-	var session models.AgentSession
-	db := a.ctx.DB.DB().Where("id = ? AND tenant_id = ?", sessionId, tenantId)
-	if userId != "admin" {
-		db = db.Where("user_id = ?", userId)
-	}
-	if err := db.First(&session).Error; err != nil {
-		return types.ResponseAgentSessionDetail{}, err
-	}
-	var messages []models.AgentMessage
-	if err := a.ctx.DB.DB().Where("session_id = ? AND tenant_id = ?", sessionId, tenantId).Order("created_at asc").Find(&messages).Error; err != nil {
-		return types.ResponseAgentSessionDetail{}, err
-	}
-	var actions []models.AgentPendingAction
-	if err := a.ctx.DB.DB().Where("session_id = ? AND tenant_id = ?", sessionId, tenantId).Find(&actions).Error; err != nil {
-		return types.ResponseAgentSessionDetail{}, err
-	}
-	statuses := make(map[string]string, len(actions))
-	for _, action := range actions {
-		status := action.Status
-		if status == "pending_confirmation" && action.ExpiresAt <= time.Now().Unix() {
-			status = "expired"
-		}
-		statuses[action.ID] = status
-	}
-	for i := range messages {
-		var evidence []map[string]interface{}
-		if json.Unmarshal([]byte(messages[i].Evidence), &evidence) != nil {
-			continue
-		}
-		for _, item := range evidence {
-			if id, ok := item["actionId"].(string); ok && statuses[id] != "" {
-				item["status"] = statuses[id]
-			}
-		}
-		encoded, _ := json.Marshal(evidence)
-		messages[i].Evidence = string(encoded)
-	}
-	return types.ResponseAgentSessionDetail{Session: session, Messages: messages}, nil
 }
 
 func (a *agentService) ListSessions(tenantId, userId string) ([]models.AgentSession, error) {

@@ -8,6 +8,8 @@ type RequestAgentSessionCreate struct {
 
 type RequestAgentSessionQuery struct {
 	SessionId string `json:"sessionId" form:"sessionId"`
+	Before    string `json:"before" form:"before"`
+	Limit     int    `json:"limit" form:"limit"`
 }
 
 type RequestAgentSessionMessage struct {
@@ -41,8 +43,10 @@ type AgentScope struct {
 }
 
 type ResponseAgentSessionDetail struct {
-	Session  models.AgentSession   `json:"session"`
-	Messages []models.AgentMessage `json:"messages"`
+	Session    models.AgentSession   `json:"session"`
+	Messages   []models.AgentMessage `json:"messages"`
+	HasMore    bool                  `json:"hasMore"`
+	NextCursor string                `json:"nextCursor,omitempty"`
 }
 
 type AgentRunRequest struct {
