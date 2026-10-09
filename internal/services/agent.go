@@ -29,6 +29,7 @@ type InterAgentService interface {
 	GetSession(context.Context, string, string, *types.RequestAgentSessionQuery) (types.ResponseAgentSessionDetail, error)
 	ListSessions(tenantId, userId string) ([]models.AgentSession, error)
 	Capabilities(tenantId, userId string) (types.AgentCapabilities, error)
+	CapabilitiesContext(context.Context, string, string) (types.AgentCapabilities, error)
 	SendMessage(ctx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage) (models.AgentMessage, error)
 	StreamMessage(ctx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage, emit func(types.AgentStreamEvent)) error
 	ProposeAction(claims agenttoken.Claims, tool string, arguments map[string]interface{}) (models.AgentPendingAction, error)
@@ -143,7 +144,11 @@ func (a *agentService) ListSessions(tenantId, userId string) ([]models.AgentSess
 }
 
 func (a *agentService) Capabilities(tenantId, userId string) (types.AgentCapabilities, error) {
-	_, capabilities, err := a.agentRunSettings(context.Background(), tenantId, userId)
+	return a.CapabilitiesContext(context.Background(), tenantId, userId)
+}
+
+func (a *agentService) CapabilitiesContext(ctx context.Context, tenantId, userId string) (types.AgentCapabilities, error) {
+	_, capabilities, err := a.agentRunSettings(ctx, tenantId, userId)
 	return capabilities, err
 }
 

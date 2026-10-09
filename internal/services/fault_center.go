@@ -24,6 +24,7 @@ type (
 		ListContext(context.Context, interface{}) (interface{}, interface{})
 		ListOptions(context.Context, interface{}) (interface{}, interface{})
 		Get(req interface{}) (data interface{}, err interface{})
+		GetContext(context.Context, interface{}) (interface{}, interface{})
 		Reset(req interface{}) (data interface{}, err interface{})
 		Slo(context.Context, interface{}) (data interface{}, err interface{})
 	}
@@ -193,8 +194,14 @@ func (f faultCenterService) ListContext(requestCtx context.Context, req interfac
 }
 
 func (f faultCenterService) Get(req interface{}) (data interface{}, err interface{}) {
+	return f.GetContext(context.Background(), req)
+}
+
+func (f faultCenterService) GetContext(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	requestCtx, cancel := context.WithTimeout(requestCtx, 10*time.Second)
+	defer cancel()
 	r := req.(*types.RequestFaultCenterQuery)
-	data, err = f.ctx.DB.FaultCenter().Get(r.TenantId, r.ID, r.Name)
+	data, err := f.ctx.DB.FaultCenter().GetContext(requestCtx, r.TenantId, r.ID, r.Name)
 	if err != nil {
 		return nil, err
 	}

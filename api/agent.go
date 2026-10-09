@@ -55,7 +55,7 @@ func (agentController agentController) Capabilities(ctx *gin.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return services.AgentService.Capabilities(tenantId, userId)
+		return services.AgentService.CapabilitiesContext(ctx.Request.Context(), tenantId, userId)
 	})
 }
 

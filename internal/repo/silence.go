@@ -15,6 +15,7 @@ type (
 
 	InterSilenceRepo interface {
 		List(tenantId, faultCenterId, query string, status string, page models.Page) ([]models.AlertSilences, int64, error)
+		ListContext(context.Context, string, string, string, string, models.Page) ([]models.AlertSilences, int64, error)
 		Create(r models.AlertSilences) error
 		Update(r models.AlertSilences) error
 		TransitionStatus(context.Context, models.AlertSilences, int) (bool, error)
@@ -57,11 +58,15 @@ func (sr SilenceRepo) TransitionStatus(ctx context.Context, before models.AlertS
 }
 
 func (sr SilenceRepo) List(tenantId, faultCenterId, query string, status string, page models.Page) ([]models.AlertSilences, int64, error) {
+	return sr.ListContext(context.Background(), tenantId, faultCenterId, query, status, page)
+}
+
+func (sr SilenceRepo) ListContext(ctx context.Context, tenantId, faultCenterId, query string, status string, page models.Page) ([]models.AlertSilences, int64, error) {
 	var (
 		silenceList []models.AlertSilences
 		count       int64
 	)
-	db := sr.db.Model(models.AlertSilences{})
+	db := sr.db.WithContext(ctx).Model(models.AlertSilences{})
 	if tenantId != "" {
 		db.Where("tenant_id = ?", tenantId)
 	}

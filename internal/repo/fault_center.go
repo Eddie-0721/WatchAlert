@@ -20,6 +20,7 @@ type (
 		ListIdentities(context.Context, string) ([]models.FaultCenter, error)
 		ListOptions(context.Context, string, string) ([]models.FaultCenterOption, error)
 		Get(tenantId, id, name string) (models.FaultCenter, error)
+		GetContext(context.Context, string, string, string) (models.FaultCenter, error)
 		Reset(tenantId, id, name, description, aggregationType string) error
 	}
 )
@@ -115,9 +116,13 @@ func (f faultCenterRepo) ListContext(ctx context.Context, tenantId, query string
 }
 
 func (f faultCenterRepo) Get(tenantId, id, name string) (models.FaultCenter, error) {
+	return f.GetContext(context.Background(), tenantId, id, name)
+}
+
+func (f faultCenterRepo) GetContext(ctx context.Context, tenantId, id, name string) (models.FaultCenter, error) {
 	var (
 		data models.FaultCenter
-		db   = f.db.Model(&models.FaultCenter{})
+		db   = f.db.WithContext(ctx).Model(&models.FaultCenter{})
 	)
 
 	if tenantId != "" {

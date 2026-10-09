@@ -16,6 +16,7 @@ type (
 
 	InterDatasourceRepo interface {
 		List(tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error)
+		ListContext(context.Context, string, string, string, string) ([]models.AlertDataSource, error)
 		Get(datasourceId string) (models.AlertDataSource, error)
 		GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error)
 		GetForTenantContext(context.Context, string, string) (models.AlertDataSource, error)
@@ -36,7 +37,11 @@ func newDatasourceInterface(db *gorm.DB, g InterGormDBCli) InterDatasourceRepo {
 }
 
 func (ds DatasourceRepo) List(tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error) {
-	var db = ds.db.Model(&models.AlertDataSource{})
+	return ds.ListContext(context.Background(), tenantId, datasourceId, datasourceType, query)
+}
+
+func (ds DatasourceRepo) ListContext(ctx context.Context, tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error) {
+	var db = ds.db.WithContext(ctx).Model(&models.AlertDataSource{})
 	var data []models.AlertDataSource
 
 	if tenantId != "" {

@@ -12,6 +12,8 @@ import (
 	"watchAlert/pkg/agenttoken"
 	"watchAlert/pkg/provider"
 	"watchAlert/pkg/tools"
+
+	"github.com/zeromicro/go-zero/core/logc"
 )
 
 const (
@@ -47,7 +49,7 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 			callError = err.Error()
 		}
 		output, _ := json.Marshal(result)
-		_ = a.ctx.DB.DB().Create(&models.AgentToolCall{
+		call := models.AgentToolCall{
 			ID:         "at-" + tools.RandId(),
 			SessionId:  claims.SessionId,
 			TenantId:   claims.TenantId,
@@ -60,10 +62,14 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 			Error:      callError,
 			DurationMs: time.Since(started).Milliseconds(),
 			CreatedAt:  time.Now().Unix(),
-		}).Error
+		}
+		if auditErr := a.saveAgentToolAudit(&call); auditErr != nil {
+			// Never log raw SQL/errors here: they may include tool input/results.
+			logc.Errorf(context.Background(), "Agent tool audit persistence failed: call_id=%s", call.ID)
+		}
 	}()
 
-	capabilities, capabilityErr := AgentService.Capabilities(claims.TenantId, claims.UserId)
+	capabilities, capabilityErr := AgentService.CapabilitiesContext(requestCtx, claims.TenantId, claims.UserId)
 	if capabilityErr != nil {
 		return nil, capabilityErr
 	}
@@ -83,15 +89,15 @@ func (a *agentToolService) Execute(requestCtx context.Context, claims agenttoken
 	case "alerts.related":
 		return a.relatedAlerts(requestCtx, arguments, claims)
 	case "incidents.get":
-		return a.getIncident(arguments, claims.TenantId)
+		return a.getIncident(requestCtx, arguments, claims.TenantId)
 	case "rules.get":
-		return a.getRule(arguments, claims.TenantId)
+		return a.getRule(requestCtx, arguments, claims.TenantId)
 	case "silences.search":
-		return a.searchSilences(arguments, claims.TenantId)
+		return a.searchSilences(requestCtx, arguments, claims.TenantId)
 	case "prometheus.datasources":
-		return a.listPrometheusDatasources(claims)
+		return a.listPrometheusDatasources(requestCtx, claims)
 	case "prometheus.rule_query":
-		return a.getRulePromQL(arguments, claims.TenantId)
+		return a.getRulePromQL(requestCtx, arguments, claims.TenantId)
 	case "prometheus.query_instant":
 		return a.queryPrometheus(requestCtx, arguments, claims, false)
 	case "prometheus.query_range":
@@ -178,31 +184,33 @@ func (a *agentToolService) relatedAlerts(requestCtx context.Context, arguments m
 		"candidateLimit": 50, "truncated": all.Total > int64(len(all.List))}, nil
 }
 
-func (a *agentToolService) getIncident(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) getIncident(requestCtx context.Context, arguments map[string]interface{}, tenantId string) (interface{}, error) {
 	id := stringArgument(arguments, "id")
 	if id == "" {
 		return nil, fmt.Errorf("故障中心 id 不能为空")
 	}
-	data, err := FaultCenterService.Get(&types.RequestFaultCenterQuery{TenantId: tenantId, ID: id})
+	data, err := FaultCenterService.GetContext(requestCtx, &types.RequestFaultCenterQuery{TenantId: tenantId, ID: id})
 	if err != nil {
 		return nil, err.(error)
 	}
 	return data, nil
 }
 
-func (a *agentToolService) getRule(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) getRule(requestCtx context.Context, arguments map[string]interface{}, tenantId string) (interface{}, error) {
+	requestCtx, cancel := context.WithTimeout(requestCtx, agentDatabaseTimeout)
+	defer cancel()
 	ruleId := stringArgument(arguments, "ruleId")
 	if ruleId == "" {
 		return nil, fmt.Errorf("ruleId 不能为空")
 	}
 	var rule models.AlertRule
-	if err := a.ctx.DB.DB().Where("tenant_id = ? AND rule_id = ?", tenantId, ruleId).First(&rule).Error; err != nil {
+	if err := a.ctx.DB.DB().WithContext(requestCtx).Where("tenant_id = ? AND rule_id = ?", tenantId, ruleId).First(&rule).Error; err != nil {
 		return nil, err
 	}
 	return rule, nil
 }
 
-func (a *agentToolService) searchSilences(arguments map[string]interface{}, tenantId string) (interface{}, error) {
+func (a *agentToolService) searchSilences(requestCtx context.Context, arguments map[string]interface{}, tenantId string) (interface{}, error) {
 	var request types.RequestSilenceQuery
 	if err := decodeAgentArguments(arguments, &request); err != nil {
 		return nil, err
@@ -212,15 +220,17 @@ func (a *agentToolService) searchSilences(arguments map[string]interface{}, tena
 	if request.Status == "" {
 		request.Status = "all"
 	}
-	data, err := SilenceService.List(&request)
+	data, err := SilenceService.ListContext(requestCtx, &request)
 	if err != nil {
 		return nil, err.(error)
 	}
 	return data, nil
 }
 
-func (a *agentToolService) listPrometheusDatasources(claims agenttoken.Claims) (interface{}, error) {
-	sources, err := a.ctx.DB.Datasource().List(claims.TenantId, "", provider.PrometheusDsProvider, "")
+func (a *agentToolService) listPrometheusDatasources(requestCtx context.Context, claims agenttoken.Claims) (interface{}, error) {
+	requestCtx, cancel := context.WithTimeout(requestCtx, agentDatabaseTimeout)
+	defer cancel()
+	sources, err := a.ctx.DB.Datasource().ListContext(requestCtx, claims.TenantId, "", provider.PrometheusDsProvider, "")
 	if err != nil {
 		return nil, err
 	}
@@ -237,8 +247,8 @@ func (a *agentToolService) listPrometheusDatasources(claims agenttoken.Claims) (
 	return result, nil
 }
 
-func (a *agentToolService) getRulePromQL(arguments map[string]interface{}, tenantId string) (interface{}, error) {
-	data, err := a.getRule(arguments, tenantId)
+func (a *agentToolService) getRulePromQL(requestCtx context.Context, arguments map[string]interface{}, tenantId string) (interface{}, error) {
+	data, err := a.getRule(requestCtx, arguments, tenantId)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +281,7 @@ func (a *agentToolService) queryPrometheus(requestCtx context.Context, arguments
 	if err := validateAgentPromQL(request.PromQL, claims); err != nil {
 		return nil, err
 	}
-	source, err := a.ctx.DB.Datasource().GetForTenant(claims.TenantId, request.DatasourceId)
+	source, err := a.agentQueryDatasource(requestCtx, claims.TenantId, request.DatasourceId)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +325,20 @@ func (a *agentToolService) queryPrometheus(requestCtx context.Context, arguments
 		return nil, err
 	}
 	return agentPrometheusResult(source, request, start.Unix(), end.Unix(), int64(step.Seconds()), metrics), nil
+}
+
+func (a *agentToolService) agentQueryDatasource(ctx context.Context, tenantID, datasourceID string) (models.AlertDataSource, error) {
+	ctx, cancel := context.WithTimeout(ctx, agentDatabaseTimeout)
+	defer cancel()
+	return a.ctx.DB.Datasource().GetForTenantContext(ctx, tenantID, datasourceID)
+}
+
+// Preserve the existing best-effort audit even when the caller disconnects,
+// but never leave its database wait unbounded or create a background goroutine.
+func (a *agentToolService) saveAgentToolAudit(call *models.AgentToolCall) error {
+	ctx, cancel := context.WithTimeout(context.Background(), agentDatabaseTimeout)
+	defer cancel()
+	return a.ctx.DB.DB().WithContext(ctx).Create(call).Error
 }
 
 func agentPrometheusResult(source models.AlertDataSource, request agentPrometheusQuery, start, end, step int64, metrics []provider.Metrics) map[string]interface{} {

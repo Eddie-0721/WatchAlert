@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"time"
 	"watchAlert/internal/ctx"
@@ -20,6 +21,7 @@ type InterSilenceService interface {
 	Update(req interface{}) (interface{}, interface{})
 	Delete(req interface{}) (interface{}, interface{})
 	List(req interface{}) (interface{}, interface{})
+	ListContext(context.Context, interface{}) (interface{}, interface{})
 }
 
 func newInterSilenceService(ctx *ctx.Context) InterSilenceService {
@@ -144,8 +146,14 @@ func (ass alertSilenceService) Delete(req interface{}) (interface{}, interface{}
 }
 
 func (ass alertSilenceService) List(req interface{}) (interface{}, interface{}) {
+	return ass.ListContext(context.Background(), req)
+}
+
+func (ass alertSilenceService) ListContext(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	requestCtx, cancel := context.WithTimeout(requestCtx, 10*time.Second)
+	defer cancel()
 	r := req.(*types.RequestSilenceQuery)
-	data, count, err := ass.ctx.DB.Silence().List(r.TenantId, r.FaultCenterId, r.Query, r.Status, r.Page)
+	data, count, err := ass.ctx.DB.Silence().ListContext(requestCtx, r.TenantId, r.FaultCenterId, r.Query, r.Status, r.Page)
 	if err != nil {
 		return nil, err
 	}
