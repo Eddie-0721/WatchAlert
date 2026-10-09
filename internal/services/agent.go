@@ -36,8 +36,8 @@ type InterAgentService interface {
 }
 
 // StreamMessage persists the user message before calling the isolated Agent
-// service and persists the final assistant reply only after a terminal done
-// event. The browser receives no provider credential or Tool result.
+// service. Only forward completion after the final reply is committed; an
+// upstream done frame alone does not mean browser-visible success.
 func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userId string, req *types.RequestAgentSessionMessage, emit func(types.AgentStreamEvent)) error {
 	if strings.TrimSpace(req.Content) == "" {
 		return fmt.Errorf("对话内容不能为空")
@@ -61,7 +61,7 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 		ID: "am-" + tools.RandId(), SessionId: req.SessionId, TenantId: tenantId,
 		Role: "user", Content: strings.TrimSpace(req.Content), CreatedAt: time.Now().Unix(),
 	}
-	if err := a.ctx.DB.DB().Create(&userMessage).Error; err != nil {
+	if err := a.saveAgentUserMessage(requestCtx, &userMessage); err != nil {
 		return err
 	}
 	runToken, err := agenttoken.Sign(agenttoken.Claims{
@@ -82,7 +82,11 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 		return err
 	}
 	payload.ModelConfig = modelConfig
-	response, err := callAgentServiceStream(requestCtx, payload, emit)
+	response, err := callAgentServiceStream(requestCtx, payload, func(event types.AgentStreamEvent) {
+		if event.Type != "done" {
+			emit(event)
+		}
+	})
 	if err != nil {
 		return err
 	}
@@ -93,11 +97,13 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 		ID: "am-" + tools.RandId(), SessionId: req.SessionId, TenantId: tenantId,
 		Role: "assistant", Content: response.Content, Evidence: response.Evidence, CreatedAt: time.Now().Unix(),
 	}
-	if err := a.ctx.DB.DB().Create(&assistantMessage).Error; err != nil {
+	if err := a.saveAgentReply(requestCtx, &assistantMessage, sessionTitle(detail.Session.Title, userMessage.Content)); err != nil {
 		return err
 	}
-	_ = a.ctx.DB.DB().Model(&models.AgentSession{}).Where("id = ? AND tenant_id = ?", req.SessionId, tenantId).
-		Updates(map[string]interface{}{"updated_at": assistantMessage.CreatedAt, "title": sessionTitle(detail.Session.Title, userMessage.Content)}).Error
+	if err := requestCtx.Err(); err != nil {
+		return err
+	}
+	emit(types.AgentStreamEvent{Type: "done", Content: assistantMessage.Content, Evidence: assistantMessage.Evidence})
 	return nil
 }
 
@@ -311,7 +317,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 		Content:   strings.TrimSpace(req.Content),
 		CreatedAt: now,
 	}
-	if err := a.ctx.DB.DB().Create(&userMessage).Error; err != nil {
+	if err := a.saveAgentUserMessage(requestCtx, &userMessage); err != nil {
 		return models.AgentMessage{}, err
 	}
 
@@ -360,11 +366,9 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	if assistantMessage.Content == "" {
 		return models.AgentMessage{}, fmt.Errorf("Agent 服务未返回分析内容")
 	}
-	if err := a.ctx.DB.DB().Create(&assistantMessage).Error; err != nil {
+	if err := a.saveAgentReply(requestCtx, &assistantMessage, sessionTitle(detail.Session.Title, userMessage.Content)); err != nil {
 		return models.AgentMessage{}, err
 	}
-	_ = a.ctx.DB.DB().Model(&models.AgentSession{}).Where("id = ? AND tenant_id = ?", req.SessionId, tenantId).
-		Updates(map[string]interface{}{"updated_at": assistantMessage.CreatedAt, "title": sessionTitle(detail.Session.Title, userMessage.Content)}).Error
 	return assistantMessage, nil
 }
 

@@ -9,6 +9,8 @@ import (
 // Only the model's working history is bounded here. The conversation view
 // keeps its existing API and historical evidence remains stored unchanged.
 func (a *agentService) loadRunHistory(ctx context.Context, tenantID, userID, sessionID string) (types.ResponseAgentSessionDetail, error) {
+	ctx, cancel := context.WithTimeout(ctx, agentDatabaseTimeout)
+	defer cancel()
 	var result types.ResponseAgentSessionDetail
 	db := a.ctx.DB.DB().WithContext(ctx)
 	sessionQuery := db.Where("id = ? AND tenant_id = ?", sessionID, tenantID)
