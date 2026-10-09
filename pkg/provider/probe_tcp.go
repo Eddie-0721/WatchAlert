@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"net"
 	"time"
 )
@@ -14,11 +15,25 @@ func NewMetricsAwareTcper() MetricsAwareProbe {
 
 // PilotWithMetrics 执行TCP探测并直接返回指标
 func (p Tcper) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	return p.PilotWithMetricsContext(context.Background(), option, ruleInfo)
+}
+
+func (p Tcper) PilotWithMetricsContext(ctx context.Context, option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	if ctx.Err() != nil {
+		return nil
+	}
 	startTime := time.Now()
 
 	// 尝试拨测指定地址和端口
-	conn, err := net.DialTimeout("tcp", option.Endpoint, time.Duration(option.Timeout)*time.Second)
+	dialer := net.Dialer{Timeout: time.Duration(option.Timeout) * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", option.Endpoint)
 	responseTime := time.Since(startTime)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 
 	// 创建基础标签
 	baseLabels := map[string]any{
@@ -35,9 +50,6 @@ func (p Tcper) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) [
 
 	// 确定成功状态
 	isSuccessful := err == nil
-	if isSuccessful && conn != nil {
-		conn.Close()
-	}
 
 	// 创建TCP指标
 	metrics := []Metrics{

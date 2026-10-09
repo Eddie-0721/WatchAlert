@@ -139,7 +139,7 @@ func (probingController probingController) Once(ctx *gin.Context) {
 	}
 
 	Service(ctx, func() (interface{}, interface{}) {
-		return services.ProbingService.Once(r)
+		return services.ProbingService.OnceContext(ctx.Request.Context(), r)
 	})
 }
 
@@ -148,6 +148,8 @@ func (probingController probingController) ChangeState(ctx *gin.Context) {
 	if !BindJson(ctx, r) {
 		return
 	}
+	tid, _ := ctx.Get("TenantID")
+	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
 		return services.ProbingService.ChangeState(r)

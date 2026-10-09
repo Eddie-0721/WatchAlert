@@ -1,5 +1,7 @@
 package provider
 
+import "context"
+
 const (
 	ICMPEndpointProvider string = "ICMP"
 	HTTPEndpointProvider string = "HTTP"
@@ -10,6 +12,9 @@ const (
 // MetricsAwareProbe 支持直接返回指标的探测接口（通用）
 type MetricsAwareProbe interface {
 	PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics
+	// Cancellation returns no metrics; a target timeout still returns failure
+	// metrics. The caller must check ctx.Err() before publishing results.
+	PilotWithMetricsContext(ctx context.Context, option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics
 }
 
 // ProbeRuleInfo 探测规则信息，用于生成指标标签（通用）

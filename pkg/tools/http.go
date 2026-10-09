@@ -40,7 +40,11 @@ func GetContext(ctx context.Context, headers map[string]string, url string, time
 
 // Certificate probes need a new handshake, not a pooled connection's old certificate.
 func GetFreshConnection(headers map[string]string, url string, timeout int) (*http.Response, error) {
-	return doRequest(context.Background(), http.MethodGet, headers, url, nil, timeout, freshHTTPTransport)
+	return GetFreshConnectionContext(context.Background(), headers, url, timeout)
+}
+
+func GetFreshConnectionContext(ctx context.Context, headers map[string]string, url string, timeout int) (*http.Response, error) {
+	return doRequest(ctx, http.MethodGet, headers, url, nil, timeout, freshHTTPTransport)
 }
 
 func Post(headers map[string]string, url string, bodyReader *bytes.Reader, timeout int) (*http.Response, error) {

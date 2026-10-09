@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"watchAlert/alert"
+	"watchAlert/alert/probe"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/internal/types"
@@ -27,6 +29,7 @@ type (
 		List(req interface{}) (interface{}, interface{})
 		Search(req interface{}) (interface{}, interface{})
 		Once(req interface{}) (interface{}, interface{})
+		OnceContext(requestCtx context.Context, req interface{}) (interface{}, interface{})
 		ChangeState(req interface{}) (interface{}, interface{})
 	}
 )
@@ -52,6 +55,9 @@ func (m probingService) Create(req interface{}) (interface{}, interface{}) {
 		Enabled:               r.Enabled,
 	}
 
+	if err := probe.ValidateProbeRule(data); err != nil {
+		return nil, err
+	}
 	err := m.ctx.DB.Probing().Create(data)
 	if err != nil {
 		return nil, err
@@ -93,6 +99,9 @@ func (m probingService) Update(req interface{}) (interface{}, interface{}) {
 		Enabled:               r.Enabled,
 	}
 
+	if err := probe.ValidateProbeRule(data); err != nil {
+		return nil, err
+	}
 	_, err := m.ctx.DB.Probing().Search(r.TenantId, r.RuleId)
 	if err != nil {
 		return nil, err
@@ -179,8 +188,18 @@ func (m probingService) Search(req interface{}) (interface{}, interface{}) {
 }
 
 func (m probingService) Once(req interface{}) (interface{}, interface{}) {
+	return m.OnceContext(context.Background(), req)
+}
+
+func (m probingService) OnceContext(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	if err := requestCtx.Err(); err != nil {
+		return nil, err
+	}
 	r := req.(*types.RequestProbingOnce)
 	ruleConfig := r.ProbingEndpointConfig
+	if err := probe.ValidateProbeConfig(r.RuleType, ruleConfig, false); err != nil {
+		return nil, err
+	}
 
 	// 准备规则信息用于指标标签
 	ruleInfo := provider.ProbeRuleInfo{
@@ -194,7 +213,7 @@ func (m probingService) Once(req interface{}) (interface{}, interface{}) {
 	switch r.RuleType {
 	case provider.HTTPEndpointProvider:
 		httper := provider.NewMetricsAwareHTTPer()
-		metrics := httper.PilotWithMetrics(provider.EndpointOption{
+		metrics := httper.PilotWithMetricsContext(requestCtx, provider.EndpointOption{
 			Endpoint: ruleConfig.Endpoint,
 			Timeout:  ruleConfig.Strategy.Timeout,
 			HTTP: provider.Ehttp{
@@ -204,12 +223,11 @@ func (m probingService) Once(req interface{}) (interface{}, interface{}) {
 			},
 		}, ruleInfo)
 
-		logc.Infof(m.ctx.Ctx, "HTTP即时拨测完成，返回 %d 个指标", len(metrics))
-		return metrics, nil
+		return probeOnceResult(requestCtx, r.RuleType, metrics)
 
 	case provider.ICMPEndpointProvider:
 		pinger := provider.NewMetricsAwarePinger()
-		metrics := pinger.PilotWithMetrics(provider.EndpointOption{
+		metrics := pinger.PilotWithMetricsContext(requestCtx, provider.EndpointOption{
 			Endpoint: ruleConfig.Endpoint,
 			Timeout:  ruleConfig.Strategy.Timeout,
 			ICMP: provider.Eicmp{
@@ -218,28 +236,25 @@ func (m probingService) Once(req interface{}) (interface{}, interface{}) {
 			},
 		}, ruleInfo)
 
-		logc.Infof(m.ctx.Ctx, "ICMP即时拨测完成，返回 %d 个指标", len(metrics))
-		return metrics, nil
+		return probeOnceResult(requestCtx, r.RuleType, metrics)
 
 	case provider.TCPEndpointProvider:
 		tcper := provider.NewMetricsAwareTcper()
-		metrics := tcper.PilotWithMetrics(provider.EndpointOption{
+		metrics := tcper.PilotWithMetricsContext(requestCtx, provider.EndpointOption{
 			Endpoint: ruleConfig.Endpoint,
 			Timeout:  ruleConfig.Strategy.Timeout,
 		}, ruleInfo)
 
-		logc.Infof(m.ctx.Ctx, "TCP即时拨测完成，返回 %d 个指标", len(metrics))
-		return metrics, nil
+		return probeOnceResult(requestCtx, r.RuleType, metrics)
 
 	case provider.SSLEndpointProvider:
 		ssler := provider.NewMetricsAwareSSLer()
-		metrics := ssler.PilotWithMetrics(provider.EndpointOption{
+		metrics := ssler.PilotWithMetricsContext(requestCtx, provider.EndpointOption{
 			Endpoint: ruleConfig.Endpoint,
 			Timeout:  ruleConfig.Strategy.Timeout,
 		}, ruleInfo)
 
-		logc.Infof(m.ctx.Ctx, "SSL即时拨测完成，返回 %d 个指标", len(metrics))
-		return metrics, nil
+		return probeOnceResult(requestCtx, r.RuleType, metrics)
 
 	default:
 		err := fmt.Errorf("不支持的探测类型: %s", r.RuleType)
@@ -248,8 +263,33 @@ func (m probingService) Once(req interface{}) (interface{}, interface{}) {
 	}
 }
 
+func probeOnceResult(ctx context.Context, ruleType string, metrics []provider.Metrics) (interface{}, interface{}) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	logc.Infof(ctx, "%s即时拨测完成，返回 %d 个指标", ruleType, len(metrics))
+	return metrics, nil
+}
+
 func (m probingService) ChangeState(req interface{}) (interface{}, interface{}) {
 	r := req.(*types.RequestProbeChangeState)
+	if r.TenantId == "" || r.RuleId == "" {
+		return nil, fmt.Errorf("tenant and probe rule ID are required")
+	}
+	// Validate persisted legacy configurations before enabling them. An invalid
+	// configuration can still be disabled without starting a timer or network IO.
+	rule, err := m.ctx.DB.Probing().Search(r.TenantId, r.RuleId)
+	if err != nil {
+		return nil, err
+	}
+	if rule.RuleId == "" {
+		return nil, fmt.Errorf("probe rule not found")
+	}
+	if *r.GetEnabled() {
+		if err := probe.ValidateProbeRule(rule); err != nil {
+			return nil, err
+		}
+	}
 	var action string
 	switch *r.GetEnabled() {
 	case true:
@@ -258,13 +298,12 @@ func (m probingService) ChangeState(req interface{}) (interface{}, interface{}) 
 		action = tools.ActionDisable
 	}
 
-	err := m.ctx.DB.Probing().ChangeState(r.TenantId, r.RuleId, r.GetEnabled())
+	err = m.ctx.DB.Probing().ChangeState(r.TenantId, r.RuleId, r.GetEnabled())
 	if err != nil {
 		return nil, err
 	}
 
 	// 判断当前节点角色
-	rule, _ := m.ctx.DB.Probing().Search(r.TenantId, r.RuleId)
 	if alert.LeaderElector != nil && alert.LeaderElector.IsLeader() {
 		// Leader: 直接操作协程
 		switch *r.GetEnabled() {

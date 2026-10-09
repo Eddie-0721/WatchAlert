@@ -31,8 +31,14 @@ func NewProbeService(ctx *ctx.Context) *ProbeService {
 
 // Add 添加拨测规则
 func (s *ProbeService) Add(rule models.ProbeRule) error {
+	if err := ValidateProbeRule(rule); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.ctx.Ctx.Err(); err != nil {
+		return err
+	}
 
 	// 检查规则是否已存在
 	if _, exists := s.watchCtxMap[rule.RuleId]; exists {
@@ -82,7 +88,7 @@ func (s *ProbeService) StopAll() error {
 		delete(s.watchCtxMap, ruleID)
 	}
 
-	logc.Infof(s.ctx.Ctx, "All probing tasks stopped")
+	logc.Infof(s.ctx.Ctx, "Cancellation requested for all probing tasks")
 	return nil
 }
 
@@ -95,16 +101,19 @@ func (s *ProbeService) GetActiveRules() int {
 
 // runProbing 运行拨测
 func (s *ProbeService) runProbing(ctx context.Context, rule models.ProbeRule) {
+	if ctx.Err() != nil {
+		return
+	}
 	timer := time.NewTicker(time.Second * time.Duration(rule.ProbingEndpointConfig.Strategy.EvalInterval))
 	defer timer.Stop()
 
 	// 立即执行一次
-	s.executeProbing(rule)
+	s.executeProbing(ctx, rule)
 
 	for {
 		select {
 		case <-timer.C:
-			s.executeProbing(rule)
+			s.executeProbing(ctx, rule)
 		case <-ctx.Done():
 			logc.Infof(s.ctx.Ctx, "Probing stopped for rule: %s", rule.RuleId)
 			return
@@ -113,18 +122,20 @@ func (s *ProbeService) runProbing(ctx context.Context, rule models.ProbeRule) {
 }
 
 // executeProbing 执行拨测
-func (s *ProbeService) executeProbing(rule models.ProbeRule) {
+func (s *ProbeService) executeProbing(requestCtx context.Context, rule models.ProbeRule) {
 	// 执行拨测并获取指标
-	metrics, err := s.executeProbeWithMetrics(rule)
+	metrics, err := s.executeProbeWithMetrics(requestCtx, rule)
+	if requestCtx.Err() != nil {
+		return
+	}
 	if err != nil {
 		logc.Errorf(s.ctx.Ctx, "Probing failed for rule %s: %v", rule.RuleId, err)
 		return
 	}
 
-	pools := s.ctx.Redis.ProviderPools()
-
 	// 写入指标到数据源
 	if len(metrics) > 0 && rule.DatasourceId != "" {
+		pools := s.ctx.Redis.ProviderPools()
 		cli, release, err := pools.AcquireClient(rule.DatasourceId)
 		defer release()
 		if err != nil {
@@ -132,15 +143,26 @@ func (s *ProbeService) executeProbing(rule models.ProbeRule) {
 			return
 		}
 
-		err = cli.(provider.PrometheusProvider).Write(s.ctx.Ctx, metrics, nil)
-		if err != nil {
+		if requestCtx.Err() != nil {
+			return
+		}
+		writer, ok := cli.(provider.PrometheusProvider)
+		if !ok {
+			logc.Errorf(s.ctx.Ctx, "Invalid probing datasource type, rule: %s", rule.RuleId)
+			return
+		}
+		err = writer.Write(requestCtx, metrics, nil)
+		if err != nil && requestCtx.Err() == nil {
 			logc.Errorf(s.ctx.Ctx, "写入指标失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, 错误: %v", rule.RuleId, rule.RuleName, rule.DatasourceId, err)
 		}
 	}
 }
 
 // executeProbeWithMetrics 执行拨测并获取指标
-func (s *ProbeService) executeProbeWithMetrics(rule models.ProbeRule) ([]provider.Metrics, error) {
+func (s *ProbeService) executeProbeWithMetrics(requestCtx context.Context, rule models.ProbeRule) ([]provider.Metrics, error) {
+	if err := requestCtx.Err(); err != nil {
+		return nil, err
+	}
 	var metrics []provider.Metrics
 	config := rule.ProbingEndpointConfig
 	endpoints := strings.Split(config.Endpoint, ",")
@@ -153,59 +175,33 @@ func (s *ProbeService) executeProbeWithMetrics(rule models.ProbeRule) ([]provide
 		RuleType: rule.RuleType,
 	}
 
-	// 根据协议类型选择相应的指标感知探测器
+	var prober provider.MetricsAwareProbe
 	switch rule.RuleType {
 	case provider.HTTPEndpointProvider:
-		httper := provider.NewMetricsAwareHTTPer()
-		for _, endpoint := range endpoints {
-			baseInfo.Endpoint = endpoint
-			metrics = append(metrics, httper.PilotWithMetrics(provider.EndpointOption{
-				Endpoint: endpoint,
-				Timeout:  config.Strategy.Timeout,
-				HTTP: provider.Ehttp{
-					Method: config.HTTP.Method,
-					Header: config.HTTP.Header,
-					Body:   config.HTTP.Body,
-				},
-			}, baseInfo)...)
-		}
-
+		prober = provider.NewMetricsAwareHTTPer()
 	case provider.ICMPEndpointProvider:
-		pinger := provider.NewMetricsAwarePinger()
-		for _, endpoint := range endpoints {
-			baseInfo.Endpoint = endpoint
-			metrics = append(metrics, pinger.PilotWithMetrics(provider.EndpointOption{
-				Endpoint: endpoint,
-				Timeout:  config.Strategy.Timeout,
-				ICMP: provider.Eicmp{
-					Interval: config.ICMP.Interval,
-					Count:    config.ICMP.Count,
-				},
-			}, baseInfo)...)
-		}
-
+		prober = provider.NewMetricsAwarePinger()
 	case provider.TCPEndpointProvider:
-		tcper := provider.NewMetricsAwareTcper()
-		for _, endpoint := range endpoints {
-			baseInfo.Endpoint = endpoint
-			metrics = append(metrics, tcper.PilotWithMetrics(provider.EndpointOption{
-				Endpoint: endpoint,
-				Timeout:  config.Strategy.Timeout,
-			}, baseInfo)...)
-		}
-
+		prober = provider.NewMetricsAwareTcper()
 	case provider.SSLEndpointProvider:
-		ssler := provider.NewMetricsAwareSSLer()
-		for _, endpoint := range endpoints {
-			baseInfo.Endpoint = endpoint
-			metrics = append(metrics, ssler.PilotWithMetrics(provider.EndpointOption{
-				Endpoint: endpoint,
-				Timeout:  config.Strategy.Timeout,
-			}, baseInfo)...)
-		}
-
+		prober = provider.NewMetricsAwareSSLer()
 	default:
 		return nil, fmt.Errorf("unsupported rule type: %s", rule.RuleType)
+	}
+	for _, endpoint := range endpoints {
+		if err := requestCtx.Err(); err != nil {
+			return nil, err
+		}
+		baseInfo.Endpoint = endpoint
+		result := prober.PilotWithMetricsContext(requestCtx, provider.EndpointOption{
+			Endpoint: endpoint, Timeout: config.Strategy.Timeout,
+			HTTP: provider.Ehttp{Method: config.HTTP.Method, Header: config.HTTP.Header, Body: config.HTTP.Body},
+			ICMP: provider.Eicmp{Interval: config.ICMP.Interval, Count: config.ICMP.Count},
+		}, baseInfo)
+		if err := requestCtx.Err(); err != nil {
+			return nil, err
+		}
+		metrics = append(metrics, result...)
 	}
 
 	return metrics, nil

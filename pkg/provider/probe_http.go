@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -32,8 +33,18 @@ type HTTPResult struct {
 
 // PilotWithMetrics 执行HTTP探测并直接返回指标
 func (h HTTPer) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	return h.PilotWithMetricsContext(context.Background(), option, ruleInfo)
+}
+
+func (h HTTPer) PilotWithMetricsContext(ctx context.Context, option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	if ctx.Err() != nil {
+		return nil
+	}
 	// 执行HTTP探测
-	httpResult := h.executeHTTPProbe(option)
+	httpResult := h.executeHTTPProbeContext(ctx, option)
+	if ctx.Err() != nil {
+		return nil
+	}
 
 	// 创建基础标签
 	baseLabels := map[string]any{
@@ -81,6 +92,10 @@ func (h HTTPer) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) 
 
 // executeHTTPProbe 执行HTTP探测并收集核心指标数据
 func (h HTTPer) executeHTTPProbe(option EndpointOption) HTTPResult {
+	return h.executeHTTPProbeContext(context.Background(), option)
+}
+
+func (h HTTPer) executeHTTPProbeContext(ctx context.Context, option EndpointOption) HTTPResult {
 	result := HTTPResult{
 		Address: option.Endpoint,
 	}
@@ -106,10 +121,10 @@ func (h HTTPer) executeHTTPProbe(option EndpointOption) HTTPResult {
 
 	switch strings.ToUpper(option.HTTP.Method) {
 	case GetHTTPMethod:
-		req, err = http.NewRequest(http.MethodGet, option.Endpoint, nil)
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, option.Endpoint, nil)
 	case PostHTTPMethod:
 		body := bytes.NewReader([]byte(option.HTTP.Body))
-		req, err = http.NewRequest(http.MethodPost, option.Endpoint, body)
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, option.Endpoint, body)
 		if err == nil {
 			req.Header.Set("Content-Type", "application/json")
 		}

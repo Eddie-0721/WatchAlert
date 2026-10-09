@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"time"
 	"watchAlert/pkg/tools"
 )
@@ -14,6 +15,13 @@ func NewMetricsAwareSSLer() MetricsAwareProbe {
 
 // PilotWithMetrics 执行SSL探测并直接返回指标
 func (p Ssler) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	return p.PilotWithMetricsContext(context.Background(), option, ruleInfo)
+}
+
+func (p Ssler) PilotWithMetricsContext(ctx context.Context, option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	if ctx.Err() != nil {
+		return nil
+	}
 	timestamp := time.Now().Unix()
 	startTime := time.Now()
 
@@ -31,12 +39,17 @@ func (p Ssler) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) [
 	}
 
 	// 发起 HTTPS 请求
-	resp, err := tools.GetFreshConnection(nil, "https://"+option.Endpoint, option.Timeout)
+	resp, err := tools.GetFreshConnectionContext(ctx, nil, "https://"+option.Endpoint, option.Timeout)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		// 返回失败指标
 		return p.createFailureMetrics(baseLabels, timestamp, time.Since(startTime))
 	}
-	defer resp.Body.Close()
 
 	// 证书为空, 跳过检测
 	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {

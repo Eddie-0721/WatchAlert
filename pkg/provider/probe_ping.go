@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/go-ping/ping"
@@ -16,15 +18,31 @@ func NewMetricsAwarePinger() MetricsAwareProbe {
 
 // PilotWithMetrics 执行ICMP探测并直接返回指标
 func (p Pinger) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	return p.PilotWithMetricsContext(context.Background(), option, ruleInfo)
+}
+
+func (p Pinger) PilotWithMetricsContext(ctx context.Context, option EndpointOption, ruleInfo ProbeRuleInfo) []Metrics {
+	if ctx.Err() != nil {
+		return nil
+	}
 	timestamp := time.Now().Unix()
 
 	// 执行ICMP探测
 	var detail PingerInformation
-	pinger, err := ping.NewPinger(option.Endpoint)
+	// Resolve with the caller's cancellation and a finite DNS budget instead of
+	// NewPinger's blocking ResolveIPAddr. Prefer IPv4, as ResolveIPAddr("ip") does.
+	resolveCtx, cancelResolve := context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
+	addr, err := resolveProbeIP(resolveCtx, net.DefaultResolver, option.Endpoint)
+	cancelResolve()
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		// 返回失败指标
 		return p.createFailureMetrics(ruleInfo, timestamp, fmt.Sprintf("New pinger error: %s", err.Error()))
 	}
+	pinger := ping.New(option.Endpoint)
+	pinger.SetIPAddr(addr)
 	pinger.SetPrivileged(true)
 
 	// 请求次数
@@ -48,7 +66,10 @@ func (p Pinger) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) 
 		}
 	}
 
-	err = pinger.Run()
+	err = runProbePing(ctx, pinger)
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		// 返回失败指标
 		return p.createFailureMetrics(ruleInfo, timestamp, fmt.Sprintf("Ping error: %s", err.Error()))
@@ -108,6 +129,40 @@ func (p Pinger) PilotWithMetrics(option EndpointOption, ruleInfo ProbeRuleInfo) 
 	}
 
 	return metrics
+}
+
+func resolveProbeIP(ctx context.Context, resolver *net.Resolver, endpoint string) (*net.IPAddr, error) {
+	addresses, err := resolver.LookupIPAddr(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("no address for probe endpoint")
+	}
+	for _, address := range addresses {
+		if address.IP.To4() != nil {
+			return &address, nil
+		}
+	}
+	return &addresses[0], nil
+}
+
+// Run remains synchronous: do not return and leave a ping goroutine running.
+// go-ping's Stop is concurrency-safe and wakes its receive/send loops.
+func runProbePing(ctx context.Context, pinger interface {
+	Run() error
+	Stop()
+}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, pinger.Stop)
+	defer stop()
+	err := pinger.Run()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 // createFailureMetrics 创建失败时的指标

@@ -2,7 +2,11 @@ package probe
 
 import (
 	"fmt"
+	"math"
+	"strings"
+	"time"
 	"watchAlert/internal/models"
+	"watchAlert/pkg/provider"
 )
 
 // ValidateProbeRule 验证拨测规则
@@ -15,14 +19,39 @@ func ValidateProbeRule(rule models.ProbeRule) error {
 		return fmt.Errorf("rule name cannot be empty")
 	}
 
-	if rule.ProbingEndpointConfig.Endpoint == "" {
-		return fmt.Errorf("endpoint cannot be empty")
-	}
+	return ValidateProbeConfig(rule.RuleType, rule.ProbingEndpointConfig, true)
+}
 
-	if rule.ProbingEndpointConfig.Strategy.EvalInterval <= 0 {
-		return fmt.Errorf("eval interval must be greater than 0")
+// Validate time conversions before timers/network work. Instant probes do not
+// use an evaluation interval, but have the same per-target timeout constraints.
+func ValidateProbeConfig(ruleType string, config models.ProbingEndpointConfig, scheduled bool) error {
+	const maxSeconds = math.MaxInt64 / int64(time.Second)
+	validSeconds := func(value int64) bool { return value > 0 && value <= maxSeconds }
+	if !validSeconds(int64(config.Strategy.Timeout)) {
+		return fmt.Errorf("probe timeout must be positive seconds within the duration range")
 	}
-
+	if scheduled && !validSeconds(config.Strategy.EvalInterval) {
+		return fmt.Errorf("probe eval interval must be positive seconds within the duration range")
+	}
+	for _, endpoint := range strings.Split(config.Endpoint, ",") {
+		if strings.TrimSpace(endpoint) == "" {
+			return fmt.Errorf("probe endpoint cannot be empty")
+		}
+	}
+	switch ruleType {
+	case provider.HTTPEndpointProvider:
+		method := strings.ToUpper(config.HTTP.Method)
+		if method != provider.GetHTTPMethod && method != provider.PostHTTPMethod {
+			return fmt.Errorf("unsupported probe HTTP method")
+		}
+	case provider.ICMPEndpointProvider:
+		if !validSeconds(int64(config.ICMP.Interval)) || config.ICMP.Count <= 0 {
+			return fmt.Errorf("ICMP interval must be positive seconds within the duration range and count must be positive")
+		}
+	case provider.TCPEndpointProvider, provider.SSLEndpointProvider:
+	default:
+		return fmt.Errorf("unsupported probe type: %s", ruleType)
+	}
 	return nil
 }
 
