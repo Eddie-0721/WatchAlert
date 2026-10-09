@@ -100,6 +100,9 @@ func (faultCenterController faultCenterController) List(ctx *gin.Context) {
 	r.TenantId = tid.(string)
 
 	Service(ctx, func() (interface{}, interface{}) {
+		if r.View == "options" {
+			return services.FaultCenterService.ListOptions(ctx.Request.Context(), r)
+		}
 		return services.FaultCenterService.List(r)
 	})
 }

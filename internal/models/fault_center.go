@@ -13,6 +13,13 @@ const (
 	ConfirmStatus     = 1
 )
 
+// FaultCenterOption deliberately contains no statistics or routing configuration.
+// Missing counts must not be confused with a measured zero.
+type FaultCenterOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type FaultCenter struct {
 	TenantId              string                `json:"tenantId"`
 	ID                    string                `json:"id"`

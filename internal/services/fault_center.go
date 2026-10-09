@@ -21,6 +21,7 @@ type (
 		Update(req interface{}) (data interface{}, err interface{})
 		Delete(req interface{}) (data interface{}, err interface{})
 		List(req interface{}) (data interface{}, err interface{})
+		ListOptions(context.Context, interface{}) (interface{}, interface{})
 		Get(req interface{}) (data interface{}, err interface{})
 		Reset(req interface{}) (data interface{}, err interface{})
 		Slo(context.Context, interface{}) (data interface{}, err interface{})
@@ -144,6 +145,19 @@ func (f faultCenterService) Delete(req interface{}) (data interface{}, err inter
 	}
 
 	return nil, nil
+}
+
+// Selectors only need center identity, never event counts. Keep this explicit so
+// management screens retain their existing statistics and failure semantics.
+func (f faultCenterService) ListOptions(requestCtx context.Context, req interface{}) (interface{}, interface{}) {
+	r := req.(*types.RequestFaultCenterQuery)
+	queryCtx, cancel := context.WithTimeout(requestCtx, 30*time.Second)
+	defer cancel()
+	data, err := f.ctx.DB.FaultCenter().ListOptions(queryCtx, r.TenantId, r.Query)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (f faultCenterService) List(req interface{}) (data interface{}, err interface{}) {

@@ -48,7 +48,8 @@ type RequestFaultCenterQuery struct {
 	TenantId string `form:"tenantId"`
 	ID       string `form:"id"`
 	Name     string `form:"name"`
-	Query    string `from:"query"`
+	Query    string `form:"query"`
+	View     string `form:"view"`
 }
 
 // RequestFaultCenterReset 请求重新配置故障中心

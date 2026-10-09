@@ -17,6 +17,7 @@ type (
 		Delete(tenantId, id string) error
 		List(tenantId, query string) ([]models.FaultCenter, error)
 		ListIdentities(context.Context, string) ([]models.FaultCenter, error)
+		ListOptions(context.Context, string, string) ([]models.FaultCenterOption, error)
 		Get(tenantId, id, name string) (models.FaultCenter, error)
 		Reset(tenantId, id, name, description, aggregationType string) error
 	}
@@ -75,6 +76,16 @@ func (f faultCenterRepo) ListIdentities(ctx context.Context, tenantID string) ([
 	var centers []models.FaultCenter
 	err := f.db.WithContext(ctx).Model(&models.FaultCenter{}).Select("id", "name").Where("tenant_id = ?", tenantID).Find(&centers).Error
 	return centers, err
+}
+
+func (f faultCenterRepo) ListOptions(ctx context.Context, tenantID, query string) ([]models.FaultCenterOption, error) {
+	data := make([]models.FaultCenterOption, 0)
+	db := f.db.WithContext(ctx).Model(&models.FaultCenter{}).Select("id", "name").Where("tenant_id = ?", tenantID)
+	if query != "" {
+		db = db.Where("name LIKE ? OR id LIKE ? OR description LIKE ?", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	}
+	err := db.Find(&data).Error
+	return data, err
 }
 
 func (f faultCenterRepo) List(tenantId, query string) ([]models.FaultCenter, error) {
