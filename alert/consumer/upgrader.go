@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"watchAlert/alert/mute"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 
@@ -28,6 +27,9 @@ func alarmUpgrade(requestCtx context.Context, ctx *ctx.Context, faultCenter mode
 	if !faultCenter.GetIsUpgradeEnabled() {
 		return nil
 	}
+	if faultCenter.GetUpgradeNoticeId() == "" {
+		return nil
+	}
 
 	// 过滤告警事件
 	filterAlerts := filterAlertEvents(faultCenter, alerts)
@@ -43,7 +45,7 @@ func alarmUpgrade(requestCtx context.Context, ctx *ctx.Context, faultCenter mode
 		}
 		// 确认阶段
 		if !event.ConfirmState.IsOk {
-			if err := processStage(requestCtx, ctx, faultCenter, event, currentTime, confirmAggregated, models.ConfirmStatus); err != nil {
+			if err := processStage(faultCenter, event, currentTime, confirmAggregated); err != nil {
 				logc.Error(ctx.Ctx, fmt.Errorf("process confirm stage failed: %w", err))
 			}
 		}
@@ -61,8 +63,11 @@ func filterAlertEvents(faultCenter models.FaultCenter, alerts map[string]*models
 	newEvents := make([]*models.AlertCurEvent, 0, len(alerts))
 
 	for _, event := range alerts {
+		if event == nil || event.Fingerprint == "" || event.TenantId != faultCenter.TenantId || event.FaultCenterId != faultCenter.ID || event.ConfirmState.IsOk {
+			continue
+		}
 		switch event.Status {
-		case models.StatePreAlert, models.StatePendingRecovery:
+		case models.StatePreAlert, models.StatePendingRecovery, models.StateRecovered:
 			continue
 		}
 
@@ -76,26 +81,10 @@ func filterAlertEvents(faultCenter models.FaultCenter, alerts map[string]*models
 			continue
 		}
 
-		// 过滤被静默的事件
-		if isMutedEvent(event, faultCenter) {
-			continue
-		}
-
 		newEvents = append(newEvents, event)
 	}
 
 	return newEvents
-}
-
-// isMutedEvent 检查事件是否被静默
-func isMutedEvent(event *models.AlertCurEvent, faultCenter models.FaultCenter) bool {
-	return mute.IsMuted(mute.MuteParams{
-		IsRecovered:   event.IsRecovered,
-		TenantId:      event.TenantId,
-		Labels:        event.Labels,
-		FaultCenterId: event.FaultCenterId,
-		RecoverNotify: faultCenter.RecoverNotify,
-	})
 }
 
 // createAggregatedAlert 创建聚合告警对象
@@ -109,7 +98,7 @@ func createAggregatedAlert(status int64, faultCenter models.FaultCenter) *Aggreg
 }
 
 // processStage 统一处理确认和处理阶段的逻辑
-func processStage(requestCtx context.Context, ctx *ctx.Context, faultCenter models.FaultCenter, alert *models.AlertCurEvent, currentTime int64, aggregated *AggregatedAlert, status int64) error {
+func processStage(faultCenter models.FaultCenter, alert *models.AlertCurEvent, currentTime int64, aggregated *AggregatedAlert) error {
 	// 检查是否超时 (达到升级条件)
 	statusStrategy := faultCenter.UpgradeStrategy
 	startTime := getStartTime(alert)
@@ -138,15 +127,8 @@ func processStage(requestCtx context.Context, ctx *ctx.Context, faultCenter mode
 		}
 	}
 
-	// 更新通知时间，并推送到 Redis
-	ok, err := ctx.Redis.Alert().UpdateNotificationTime(requestCtx, *alert, currentTime, true)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-	alert.ConfirmState.ConfirmTimeoutSendTime = max(alert.ConfirmState.ConfirmTimeoutSendTime, currentTime)
+	// Candidate collection is read-only. Actual clock updates happen only
+	// after route eligibility and per-member silence checks during preparation.
 	aggregated.Fingerprints = append(aggregated.Fingerprints, alert.Fingerprint)
 	aggregated.Events = append(aggregated.Events, alert)
 
@@ -169,12 +151,6 @@ func sendIfNotEmpty(requestCtx context.Context, ctx *ctx.Context, faultCenter mo
 		return nil
 	}
 
-	// 仅保留第一个事件发送
-	if len(aggregated.Events) > 1 {
-		aggregated.Events[0].Annotations = fmt.Sprintf("%s%s", aggregated.Events[0].Annotations, getContent(len(aggregated.Events)))
-		aggregated.Events = aggregated.Events[:1]
-	}
-
 	return sendAggregatedAlert(requestCtx, ctx, faultCenter, aggregated)
 }
 
@@ -185,8 +161,8 @@ func sendAggregatedAlert(requestCtx context.Context, ctx *ctx.Context, faultCent
 		return nil
 	}
 
-	logc.Alert(ctx.Ctx, fmt.Sprintf("Aggregated alarm confirm timeout fingerprints: %v, exceeded %d min",
-		aggregated.Fingerprints,
+	logc.Alert(ctx.Ctx, fmt.Sprintf("Aggregated alarm confirm timeout candidates: %d, exceeded %d min",
+		len(aggregated.Fingerprints),
 		aggregated.Timeout))
 
 	return handleAlert(requestCtx, ctx, "upgrade", faultCenter, noticeId, aggregated.Events)

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"watchAlert/alert/mute"
 	"watchAlert/alert/process"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
@@ -56,55 +55,31 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 			// 获取当前事件等级对应的路由配置
 			routes := getNoticeRoutes(noticeData, severity)
 			groupSize := 1
-			if processType == "alarm" && faultCenter.GetAlarmAggregationType() == "Rule" {
+			if processType == "upgrade" || (processType == "alarm" && faultCenter.GetAlarmAggregationType() == "Rule") {
 				groupSize = len(events)
 			}
 			for start := 0; start < len(events); start += groupSize {
 				members := events[start:min(start+groupSize, len(events))]
-				curTime := time.Now().Unix()
-				if err := requestCtx.Err(); err != nil {
-					return errors.Join(firstSendError, err)
-				}
-				ready := make([]*models.AlertCurEvent, 0, len(members))
-				for _, member := range members {
-					if processType == "alarm" && !member.IsRecovered {
-						ok, err := ctx.Redis.Alert().UpdateNotificationTime(requestCtx, *member, curTime, false)
-						if err != nil {
-							if firstSendError == nil {
-								firstSendError = fmt.Errorf("update notification clock: %w", err)
-							}
-							continue
-						}
-						if !ok {
-							continue
-						}
-						member.LastSendTime = max(member.LastSendTime, curTime)
-					}
-					ready = append(ready, member)
-				}
-				if len(ready) == 0 {
-					continue
-				}
-				event := withRuleGroupByAlerts(ready)[0]
-
 				if len(routes) == 0 {
-					logc.Infof(ctx.Ctx, "没有匹配的通知策略, 告警事件名称: %s, 通知对象名称: %s", event.RuleName, noticeData.Name)
-				}
-
-				if mute.IsMuted(mute.MuteParams{
-					IsRecovered:   event.IsRecovered,
-					TenantId:      event.TenantId,
-					Labels:        event.Labels,
-					FaultCenterId: event.FaultCenterId,
-					RecoverNotify: faultCenter.RecoverNotify,
-				}) {
 					continue
 				}
-
 				for _, route := range routes {
 					if err := requestCtx.Err(); err != nil {
 						return errors.Join(firstSendError, err)
 					}
+					// Re-read after each potentially slow route. Never carry a
+					// silence decision across external notification calls.
+					ready, err := prepareNotificationMembers(requestCtx, ctx, processType, faultCenter, members)
+					if err != nil {
+						if firstSendError == nil {
+							firstSendError = err
+						}
+						// A partial clock failure may leave other valid members.
+					}
+					if len(ready) == 0 {
+						continue
+					}
+					event := aggregateNotificationMembers(processType, ready)
 					// 设置值班用户信息
 					dutyUsers := getDutyUsers(ctx, noticeData, route.NoticeType)
 					event.DutyUser = strings.Join(dutyUsers, " ")
@@ -115,16 +90,16 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 					// 构建邮件信息
 					email := models.Email{
 						Subject: route.Subject,
-						To:      route.To,
-						CC:      route.CC,
+						To:      slices.Clone(route.To),
+						CC:      slices.Clone(route.CC),
 					}
 
 					phone := models.Phone{
-						To: route.To,
+						To: slices.Clone(route.To),
 					}
 
 					sms := models.SMS{
-						To: route.To,
+						To: slices.Clone(route.To),
 					}
 
 					if len(dutyUsers) > 0 {
@@ -139,7 +114,7 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 					}
 
 					// 发送告警
-					err := mediums.Sender(ctx, mediums.SendParams{
+					err = mediums.Sender(ctx, mediums.SendParams{
 						RequestContext: requestCtx,
 						TenantId:       event.TenantId,
 						EventId:        event.EventId,
@@ -173,15 +148,17 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 	return g.Wait()
 }
 
-// withRuleGroupByAlerts 聚合告警
-func withRuleGroupByAlerts(alerts []*models.AlertCurEvent) []*models.AlertCurEvent {
-	if len(alerts) <= 1 {
-		return alerts
-	}
-
+// Aggregation changes only a local payload, not source cache events.
+func aggregateNotificationMembers(processType string, alerts []*models.AlertCurEvent) *models.AlertCurEvent {
 	event := *alerts[0]
-	event.Annotations += fmt.Sprintf("\n聚合 %d 条消息，详情请前往 WatchAlert 查看\n", len(alerts))
-	return []*models.AlertCurEvent{&event}
+	if len(alerts) > 1 {
+		if processType == "upgrade" {
+			event.Annotations += getContent(len(alerts))
+		} else {
+			event.Annotations += fmt.Sprintf("\n聚合 %d 条消息，详情请前往 WatchAlert 查看\n", len(alerts))
+		}
+	}
+	return &event
 }
 
 // getNoticeData 获取 Notice 数据

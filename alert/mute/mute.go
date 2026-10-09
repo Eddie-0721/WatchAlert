@@ -1,6 +1,7 @@
 package mute
 
 import (
+	"fmt"
 	"time"
 	"watchAlert/internal/ctx"
 	models "watchAlert/internal/models"
@@ -40,35 +41,40 @@ func IsSilence(mute MuteParams) bool {
 	rules, err := silenceCtx.ListAlertMutes(mute.TenantId, mute.FaultCenterId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "%s", err.Error())
-		return false
+		return true
 	}
 
-	// Snapshot lives for this decision only, not across sends or consumer ticks.
-	for _, muteRule := range rules {
-		if muteRule.Status != 1 || time.Now().Unix() < muteRule.StartsAt || time.Now().Unix() >= muteRule.EndsAt {
-			continue
-		}
-
-		if evalCondition(mute.Labels, muteRule.Labels) {
-			return true
-		}
+	match, err := CompileSnapshotChecked(rules, time.Now().Unix())
+	if err != nil {
+		logc.Errorf(ctx.Ctx, "Cannot evaluate silence rules: %v", err)
+		return true
 	}
-
-	return false
+	return match(mute.Labels)
 }
 
 // CompileSnapshot reuses compiled matchers only within a single read operation.
 // Each new request observes updated rules and evaluates their time boundaries again.
 func CompileSnapshot(rules []models.AlertSilences, now int64) func(map[string]interface{}) bool {
+	match, err := CompileSnapshotChecked(rules, now)
+	if err != nil {
+		return func(map[string]interface{}) bool { return true }
+	}
+	return match
+}
+
+// Production callers propagate errors instead of reporting an unknown silence
+// state as either an active silence or an unmuted event.
+func CompileSnapshotChecked(rules []models.AlertSilences, now int64) (func(map[string]interface{}) bool, error) {
 	var matches []func(map[string]interface{}) bool
 	for _, rule := range rules {
 		if rule.Status != 1 || now < rule.StartsAt || now >= rule.EndsAt {
 			continue
 		}
 		match, err := models.CompileSilenceMatchers(rule.Labels)
-		if err == nil {
-			matches = append(matches, match)
+		if err != nil {
+			return nil, fmt.Errorf("invalid active silence %s: %w", rule.ID, err)
 		}
+		matches = append(matches, match)
 	}
 	return func(labels map[string]interface{}) bool {
 		for _, match := range matches {
@@ -77,7 +83,20 @@ func CompileSnapshot(rules []models.AlertSilences, now int64) func(map[string]in
 			}
 		}
 		return false
+	}, nil
+}
+
+type SilenceReader interface {
+	ListAlertMutes(string, string) ([]models.AlertSilences, error)
+}
+
+// Read once per preparation, never cache across slow sends or consumer ticks.
+func LoadSnapshot(reader SilenceReader, tenantID, centerID string, now int64) (func(map[string]interface{}) bool, error) {
+	rules, err := reader.ListAlertMutes(tenantID, centerID)
+	if err != nil {
+		return nil, fmt.Errorf("read silence state: %w", err)
 	}
+	return CompileSnapshotChecked(rules, now)
 }
 
 func evalCondition(metrics map[string]interface{}, muteLabels []models.SilenceLabel) bool {

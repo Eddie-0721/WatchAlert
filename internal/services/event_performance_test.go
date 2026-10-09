@@ -13,13 +13,17 @@ import (
 
 type countedSilences struct {
 	cache.SilenceCacheInterface
-	calls map[string]int
-	err   error
-	now   int64
+	calls   map[string]int
+	err     error
+	now     int64
+	invalid bool
 }
 
 func (s *countedSilences) ListAlertMutes(tenant, center string) ([]models.AlertSilences, error) {
 	s.calls[tenant+"/"+center]++
+	if s.invalid {
+		return []models.AlertSilences{{Status: 1, StartsAt: s.now - 10, EndsAt: s.now + 100}}, nil
+	}
 	return []models.AlertSilences{{Status: 1, StartsAt: s.now - 10, EndsAt: s.now + 100,
 		Labels: []models.SilenceLabel{{Key: "env", Operator: "=~", Value: "^prod$"}}}}, s.err
 }
@@ -66,5 +70,10 @@ func TestEventListReadsSilencesOncePerCenterBeforePagination(t *testing.T) {
 	mutes.err = errors.New("redis unavailable")
 	if _, err := service.ListCurrentEvent(query); err == nil {
 		t.Fatal("silence read failure hidden")
+	}
+	mutes.err = nil
+	mutes.invalid = true
+	if _, err := service.ListCurrentEvent(query); err == nil {
+		t.Fatal("invalid active silence reported as unmuted")
 	}
 }

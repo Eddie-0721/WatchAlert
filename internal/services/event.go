@@ -164,7 +164,10 @@ func (e eventService) ListCurrentEvent(req interface{}) (interface{}, interface{
 			if err != nil {
 				return nil, fmt.Errorf("读取静默状态失败: %w", err)
 			}
-			matchSilence = mute.CompileSnapshot(rules, curTime.Unix())
+			matchSilence, err = mute.CompileSnapshotChecked(rules, curTime.Unix())
+			if err != nil {
+				return nil, fmt.Errorf("读取静默状态失败: %w", err)
+			}
 			silenceMatchers[event.FaultCenterId] = matchSilence
 		}
 		isSilenced := matchSilence(event.Labels)
