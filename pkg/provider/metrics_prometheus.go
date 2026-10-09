@@ -280,14 +280,29 @@ func (v PrometheusProvider) GetExternalLabels() map[string]interface{} {
 
 // Write 将记录规则结果写入 Prometheus 远程写入端点
 func (v PrometheusProvider) Write(ctx context.Context, metrics []Metrics, externalLabels map[string]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(metrics) == 0 {
 		return nil
 	}
+	timeout := v.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	if timeout > math.MaxInt64/int64(time.Second) {
+		return fmt.Errorf("invalid Prometheus write timeout")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
 
 	// 转换为Prometheus Remote Write格式
-	writeRequest, err := v.convertToRemoteWriteFormat(metrics, externalLabels)
+	writeRequest, err := v.convertToRemoteWriteFormat(ctx, metrics, externalLabels)
 	if err != nil {
 		return fmt.Errorf("转换为Remote Write格式失败: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// 序列化为Protobuf
@@ -295,9 +310,15 @@ func (v PrometheusProvider) Write(ctx context.Context, metrics []Metrics, extern
 	if err != nil {
 		return fmt.Errorf("序列化Protobuf失败: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Snappy压缩
 	compressed := snappy.Encode(nil, data)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.WriteURL, bytes.NewBuffer(compressed))
@@ -321,6 +342,9 @@ func (v PrometheusProvider) Write(ctx context.Context, metrics []Metrics, extern
 		return fmt.Errorf("发送Prometheus请求失败: %w", err)
 	}
 	defer resp.Body.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// 检查响应状态
 	if resp.StatusCode == http.StatusNoContent {
@@ -328,15 +352,28 @@ func (v PrometheusProvider) Write(ctx context.Context, metrics []Metrics, extern
 	}
 
 	// 处理错误响应
-	body, _ := io.ReadAll(resp.Body)
+	const maxErrorResponseBytes = 64 << 10
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("prometheus写入失败，状态码: %d, 读取错误响应失败: %w", resp.StatusCode, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(body) > maxErrorResponseBytes {
+		return fmt.Errorf("prometheus写入失败，状态码: %d, 响应超过 %d 字节限制", resp.StatusCode, maxErrorResponseBytes)
+	}
 	return fmt.Errorf("prometheus写入失败，状态码: %d, 响应: %s", resp.StatusCode, string(body))
 }
 
 // convertToRemoteWriteFormat 转换为 Remote Write格式
-func (v PrometheusProvider) convertToRemoteWriteFormat(results []Metrics, externalLabels map[string]string) (*prompb.WriteRequest, error) {
+func (v PrometheusProvider) convertToRemoteWriteFormat(ctx context.Context, results []Metrics, externalLabels map[string]string) (*prompb.WriteRequest, error) {
 	var timeSeries []prompb.TimeSeries
 
 	for _, metric := range results {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// 构建标签
 		labels := []prompb.Label{
 			{Name: "__name__", Value: metric.Name},
