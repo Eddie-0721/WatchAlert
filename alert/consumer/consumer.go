@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"runtime/debug"
 	"sync"
 	"time"
 	"watchAlert/alert/process"
@@ -15,9 +14,6 @@ import (
 )
 
 const (
-	// 任务通道缓冲区大小
-	TaskChannelBufferSize = 1
-
 	// 默认处理时间间隔
 	DefaultProcessTime = 1
 
@@ -38,6 +34,7 @@ type (
 	Consume struct {
 		ctx *ctx.Context
 		sync.RWMutex
+		workers map[string]*consumerWorker
 	}
 
 	EventsGroup struct {
@@ -119,51 +116,30 @@ func NewConsumerWork(ctx *ctx.Context) ConsumeInterface {
 }
 
 func (c *Consume) Submit(faultCenter models.FaultCenter) {
-	c.ctx.Mux.Lock()
-	defer c.ctx.Mux.Unlock()
-
-	withCtx, cancel := context.WithCancel(context.Background())
-	c.ctx.ContextMap[faultCenter.ID] = cancel
-	go c.Watch(withCtx, faultCenter)
+	c.submit(faultCenter, c.executeTask)
 }
 
 func (c *Consume) Stop(faultCenterId string) {
-	c.ctx.Mux.Lock()
-	defer c.ctx.Mux.Unlock()
-
-	if cancel, exists := c.ctx.ContextMap[faultCenterId]; exists {
-		cancel()
-		delete(c.ctx.ContextMap, faultCenterId)
+	c.Lock()
+	defer c.Unlock()
+	if worker := c.workers[faultCenterId]; worker != nil {
+		worker.stop()
 	}
 }
 
 func (c *Consume) Restart(faultCenter models.FaultCenter) {
-	c.Stop(faultCenter.ID)
 	c.Submit(faultCenter)
 }
 
 // Watch 启动 Consumer Watch 进程
 func (c *Consume) Watch(ctx context.Context, faultCenter models.FaultCenter) {
-	taskChan := make(chan struct{}, TaskChannelBufferSize)
 	timer := time.NewTicker(time.Second * time.Duration(DefaultProcessTime))
-	defer func() {
-		timer.Stop()
-		if r := recover(); r != nil {
-			// 获取调用栈信息
-			stack := debug.Stack()
-			logc.Error(c.ctx.Ctx, fmt.Sprintf("Recovered from consumer watch goroutine panic: %s, FaultCenterName: %s, Id: %s\n%s", r, faultCenter.Name, faultCenter.ID, stack))
-			if ctx.Err() == nil {
-				c.Restart(faultCenter)
-			}
-		}
-	}()
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-timer.C:
-			// 处理任务信号量
-			taskChan <- struct{}{}
-			c.executeTask(ctx, faultCenter, taskChan)
+			c.executeSafely(ctx, faultCenter, c.executeTask)
 		case <-ctx.Done():
 			return
 		}
@@ -171,11 +147,10 @@ func (c *Consume) Watch(ctx context.Context, faultCenter models.FaultCenter) {
 }
 
 // executeTask 执行具体的任务逻辑
-func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.FaultCenter, taskChan chan struct{}) {
-	defer func() {
-		// 释放任务信号量
-		<-taskChan
-	}()
+func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.FaultCenter) {
+	if requestCtx.Err() != nil {
+		return
+	}
 	// 处理静默规则
 	c.processSilenceRule(requestCtx, faultCenter)
 	if requestCtx.Err() != nil {
@@ -189,7 +164,7 @@ func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.Fau
 	}
 
 	// 事件过滤
-	filterEvents := c.filterAlertEvents(faultCenter, data)
+	filterEvents := c.filterAlertEvents(requestCtx, faultCenter, data)
 	// 事件分组
 	alertGroups := AlertGroups{
 		Rules: make(map[string]RulesGroup),
@@ -205,11 +180,14 @@ func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.Fau
 }
 
 // filterAlertEvents 过滤告警事件
-func (c *Consume) filterAlertEvents(faultCenter models.FaultCenter, alerts map[string]*models.AlertCurEvent) []*models.AlertCurEvent {
+func (c *Consume) filterAlertEvents(requestCtx context.Context, faultCenter models.FaultCenter, alerts map[string]*models.AlertCurEvent) []*models.AlertCurEvent {
 	var newEvents []*models.AlertCurEvent
 
 	for _, event := range alerts {
-		if event.Fingerprint == "" {
+		if requestCtx.Err() != nil {
+			return nil
+		}
+		if event == nil || event.Fingerprint == "" {
 			continue
 		}
 
@@ -264,17 +242,9 @@ func (c *Consume) alarmGrouping(faultCenter models.FaultCenter, alertGroups *Ale
 
 // sendAlerts 发送告警
 func (c *Consume) sendAlerts(requestCtx context.Context, faultCenter models.FaultCenter, aggEvents *AlertGroups) {
-	c.RLock()
-	defer c.RUnlock()
-
-	for _, rule := range aggEvents.Rules {
-		for _, groups := range rule.Groups {
-			if requestCtx.Err() != nil {
-				return
-			}
-			c.processAlertGroup(requestCtx, faultCenter, groups.NoticeID, groups.Events)
-		}
-	}
+	dispatchNotificationGroups(requestCtx, aggEvents, func(group EventsGroup) {
+		c.processAlertGroup(requestCtx, faultCenter, group.NoticeID, group.Events)
+	})
 }
 
 // processAlertGroup 处理告警组
@@ -291,7 +261,7 @@ func (c *Consume) removeAlertFromCache(alert *models.AlertCurEvent) {
 
 // RestartAllConsumers 重启消费进程
 func (c *Consume) RestartAllConsumers() {
-	list, err := ctx.DB.FaultCenter().List("", "")
+	list, err := c.ctx.DB.FaultCenter().List("", "")
 	if err != nil {
 		logc.Error(ctx.Ctx, fmt.Sprintf("获取故障中心列表错误, err: %s", err.Error()))
 		return
@@ -345,23 +315,12 @@ func (c *Consume) processSilenceRule(requestCtx context.Context, faultCenter mod
 
 // StopAllConsumers 停止所有消费者
 func (c *Consume) StopAllConsumers() {
-	c.ctx.Mux.Lock()
-	defer c.ctx.Mux.Unlock()
-
-	count := len(c.ctx.ContextMap)
-	if count == 0 {
-		return
+	c.Lock()
+	defer c.Unlock()
+	for _, worker := range c.workers {
+		worker.stop()
 	}
-
-	logc.Infof(c.ctx.Ctx, "停止 %d 个故障中心消费者...", count)
-
-	// 取消所有消费任务
-	for fcId, cancel := range c.ctx.ContextMap {
-		cancel()
-		delete(c.ctx.ContextMap, fcId)
-	}
-
-	logc.Infof(c.ctx.Ctx, "所有故障中心消费者已停止")
+	logc.Infof(c.ctx.Ctx, "已请求停止 %d 个故障中心消费者，等待在途任务退出", len(c.workers))
 }
 
 func evalCondition(metrics map[string]interface{}, noticeLabels []models.NoticeLabels) bool {

@@ -24,6 +24,7 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 		return err
 	}
 	g := new(errgroup.Group)
+	g.SetLimit(notificationGroupWorkers)
 
 	// 获取通知对象详细信息
 	noticeData, err := getNoticeData(ctx, faultCenter.TenantId, noticeId)
@@ -46,102 +47,104 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 
 	for severity, events := range severityGroups {
 		g.Go(func() error {
-			// Retain one failure, not one allocated error per event in a flood.
-			var firstSendError error
-			if events == nil {
-				return nil
-			}
-
-			// 获取当前事件等级对应的路由配置
-			routes := getNoticeRoutes(noticeData, severity)
-			groupSize := 1
-			if processType == "upgrade" || (processType == "alarm" && faultCenter.GetAlarmAggregationType() == "Rule") {
-				groupSize = len(events)
-			}
-			for start := 0; start < len(events); start += groupSize {
-				members := events[start:min(start+groupSize, len(events))]
-				if len(routes) == 0 {
-					continue
+			return withNotificationSlot(requestCtx, func() error {
+				// Retain one failure, not one allocated error per event in a flood.
+				var firstSendError error
+				if events == nil {
+					return nil
 				}
-				for _, route := range routes {
-					if err := requestCtx.Err(); err != nil {
-						return errors.Join(firstSendError, err)
-					}
-					// Re-read after each potentially slow route. Never carry a
-					// silence decision across external notification calls.
-					ready, err := prepareNotificationMembers(requestCtx, ctx, processType, faultCenter, members)
-					if err != nil {
-						if firstSendError == nil {
-							firstSendError = err
-						}
-						// A partial clock failure may leave other valid members.
-					}
-					if len(ready) == 0 {
+
+				// 获取当前事件等级对应的路由配置
+				routes := getNoticeRoutes(noticeData, severity)
+				groupSize := 1
+				if processType == "upgrade" || (processType == "alarm" && faultCenter.GetAlarmAggregationType() == "Rule") {
+					groupSize = len(events)
+				}
+				for start := 0; start < len(events); start += groupSize {
+					members := events[start:min(start+groupSize, len(events))]
+					if len(routes) == 0 {
 						continue
 					}
-					event := aggregateNotificationMembers(processType, ready)
-					// 设置值班用户信息
-					dutyUsers := getDutyUsers(ctx, noticeData, route.NoticeType)
-					event.DutyUser = strings.Join(dutyUsers, " ")
-
-					// 生成告警内容
-					content := generateAlertContent(ctx, event, noticeData, route)
-
-					// 构建邮件信息
-					email := models.Email{
-						Subject: route.Subject,
-						To:      slices.Clone(route.To),
-						CC:      slices.Clone(route.CC),
-					}
-
-					phone := models.Phone{
-						To: slices.Clone(route.To),
-					}
-
-					sms := models.SMS{
-						To: slices.Clone(route.To),
-					}
-
-					if len(dutyUsers) > 0 {
-						switch route.NoticeType {
-						case "Phone":
-							phone.To = append(phone.To, dutyUsers...)
-						case "SMS":
-							sms.To = append(sms.To, dutyUsers...)
-						case "Email":
-							email.To = append(email.To, dutyUsers...)
+					for _, route := range routes {
+						if err := requestCtx.Err(); err != nil {
+							return errors.Join(firstSendError, err)
 						}
-					}
+						// Re-read after each potentially slow route. Never carry a
+						// silence decision across external notification calls.
+						ready, err := prepareNotificationMembers(requestCtx, ctx, processType, faultCenter, members)
+						if err != nil {
+							if firstSendError == nil {
+								firstSendError = err
+							}
+							// A partial clock failure may leave other valid members.
+						}
+						if len(ready) == 0 {
+							continue
+						}
+						event := aggregateNotificationMembers(processType, ready)
+						// 设置值班用户信息
+						dutyUsers := getDutyUsers(ctx, noticeData, route.NoticeType)
+						event.DutyUser = strings.Join(dutyUsers, " ")
 
-					// 发送告警
-					err = mediums.Sender(ctx, mediums.SendParams{
-						RequestContext: requestCtx,
-						TenantId:       event.TenantId,
-						EventId:        event.EventId,
-						RuleName:       event.RuleName,
-						Severity:       event.Severity,
-						NoticeType:     route.NoticeType,
-						NoticeId:       noticeId,
-						NoticeName:     noticeData.Name,
-						IsRecovered:    event.IsRecovered,
-						Hook:           route.Hook,
-						Headers:        route.Headers,
-						Email:          email,
-						Phone:          phone,
-						SMS:            sms,
-						Content:        content,
-						Sign:           route.Sign,
-					})
-					if err != nil {
-						logc.Error(ctx.Ctx, fmt.Sprintf("Failed to send alert: %v", err))
-						if firstSendError == nil {
-							firstSendError = err
+						// 生成告警内容
+						content := generateAlertContent(ctx, event, noticeData, route)
+
+						// 构建邮件信息
+						email := models.Email{
+							Subject: route.Subject,
+							To:      slices.Clone(route.To),
+							CC:      slices.Clone(route.CC),
+						}
+
+						phone := models.Phone{
+							To: slices.Clone(route.To),
+						}
+
+						sms := models.SMS{
+							To: slices.Clone(route.To),
+						}
+
+						if len(dutyUsers) > 0 {
+							switch route.NoticeType {
+							case "Phone":
+								phone.To = append(phone.To, dutyUsers...)
+							case "SMS":
+								sms.To = append(sms.To, dutyUsers...)
+							case "Email":
+								email.To = append(email.To, dutyUsers...)
+							}
+						}
+
+						// 发送告警
+						err = mediums.Sender(ctx, mediums.SendParams{
+							RequestContext: requestCtx,
+							TenantId:       event.TenantId,
+							EventId:        event.EventId,
+							RuleName:       event.RuleName,
+							Severity:       event.Severity,
+							NoticeType:     route.NoticeType,
+							NoticeId:       noticeId,
+							NoticeName:     noticeData.Name,
+							IsRecovered:    event.IsRecovered,
+							Hook:           route.Hook,
+							Headers:        route.Headers,
+							Email:          email,
+							Phone:          phone,
+							SMS:            sms,
+							Content:        content,
+							Sign:           route.Sign,
+						})
+						if err != nil {
+							logc.Error(ctx.Ctx, fmt.Sprintf("Failed to send alert: %v", err))
+							if firstSendError == nil {
+								firstSendError = err
+							}
 						}
 					}
 				}
-			}
 
-			return firstSendError
+				return firstSendError
+			})
 		})
 	}
 
