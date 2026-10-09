@@ -122,6 +122,11 @@ func NewDBClient(dbcfg DBConfig) *gorm.DB {
 		closeDB(db)
 		return nil
 	}
+	if err := initArchiveStorage(db); err != nil {
+		logc.Errorf(context.Background(), "initialize recovery archive storage: %v", err)
+		closeDB(db)
+		return nil
+	}
 
 	if config.Application.Server.Mode == "debug" {
 		db.Debug()

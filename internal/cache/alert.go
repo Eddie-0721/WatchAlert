@@ -23,6 +23,7 @@ type (
 		PushAlertEvent(event *models.AlertCurEvent) error
 		ConfirmAlertEvent(context.Context, models.AlertCurEvent, string, int64) (bool, error)
 		UpdateNotificationTime(context.Context, models.AlertCurEvent, int64, bool) (bool, error)
+		RemoveRecoveredEvent(context.Context, models.AlertCurEvent) (bool, error)
 		RemoveAlertEvent(tenantId, faultCenterId, fingerprint string)
 		GetFingerprintsByRuleId(tenantId, faultCenterId, ruleId string) []string
 		GetAllEvents(key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error)

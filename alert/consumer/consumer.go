@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sync"
@@ -182,12 +183,13 @@ func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.Fau
 // filterAlertEvents 过滤告警事件
 func (c *Consume) filterAlertEvents(requestCtx context.Context, faultCenter models.FaultCenter, alerts map[string]*models.AlertCurEvent) []*models.AlertCurEvent {
 	var newEvents []*models.AlertCurEvent
+	archiveFailed := false
 
 	for _, event := range alerts {
 		if requestCtx.Err() != nil {
 			return nil
 		}
-		if event == nil || event.Fingerprint == "" {
+		if event == nil || event.Fingerprint == "" || event.TenantId != faultCenter.TenantId || event.FaultCenterId != faultCenter.ID {
 			continue
 		}
 
@@ -195,12 +197,29 @@ func (c *Consume) filterAlertEvents(requestCtx context.Context, faultCenter mode
 		if event.Status != models.StateAlerting && event.Status != models.StateRecovered {
 			continue
 		}
+		if (event.Status == models.StateRecovered) != event.IsRecovered {
+			logc.Errorf(c.ctx.Ctx, "Inconsistent recovery state, center=%s fingerprint=%s", faultCenter.ID, event.Fingerprint)
+			continue
+		}
 
 		// 记录恢复状态的事件
 		if event.IsRecovered {
-			c.removeAlertFromCache(event)
-			if err := process.RecordAlertHisEvent(c.ctx, *event); err != nil {
-				logc.Error(c.ctx.Ctx, fmt.Sprintf("Failed to record alert history: %v", err))
+			if archiveFailed {
+				continue
+			}
+			if err := process.RecordAlertHisEventContext(requestCtx, c.ctx, *event); err != nil {
+				logc.Errorf(c.ctx.Ctx, "Failed to record alert history, center=%s fingerprint=%s: %v", faultCenter.ID, event.Fingerprint, err)
+				archiveFailed = !errors.Is(err, models.ErrInvalidRecovery)
+				continue
+			}
+			removed, err := c.ctx.Redis.Alert().RemoveRecoveredEvent(requestCtx, *event)
+			if err != nil {
+				logc.Errorf(c.ctx.Ctx, "Failed to remove archived recovery: %v", err)
+				archiveFailed = true
+				continue
+			}
+			if !removed {
+				continue
 			}
 		}
 
@@ -252,11 +271,6 @@ func (c *Consume) processAlertGroup(requestCtx context.Context, faultCenter mode
 	if err := handleAlert(requestCtx, c.ctx, "alarm", faultCenter, noticeId, alerts); err != nil {
 		logc.Errorf(c.ctx.Ctx, "Alert group processing failed: %v", err)
 	}
-}
-
-// removeAlertFromCache 从缓存中删除告警
-func (c *Consume) removeAlertFromCache(alert *models.AlertCurEvent) {
-	c.ctx.Redis.Alert().RemoveAlertEvent(alert.TenantId, alert.FaultCenterId, alert.Fingerprint)
 }
 
 // RestartAllConsumers 重启消费进程

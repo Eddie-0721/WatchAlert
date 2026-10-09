@@ -144,6 +144,14 @@ func NotInTheEffectiveTime(et models.EffectiveTime) bool {
 
 // RecordAlertHisEvent 记录历史告警
 func RecordAlertHisEvent(ctx *ctx.Context, alert models.AlertCurEvent) error {
+	parent := ctx.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return RecordAlertHisEventContext(parent, ctx, alert)
+}
+
+func RecordAlertHisEventContext(requestCtx context.Context, ctx *ctx.Context, alert models.AlertCurEvent) error {
 	hisData := models.AlertHisEvent{
 		TenantId:         alert.TenantId,
 		RuleGroupId:      alert.RuleGroupId,
@@ -167,9 +175,11 @@ func RecordAlertHisEvent(ctx *ctx.Context, alert models.AlertCurEvent) error {
 		SearchQL:         alert.SearchQL,
 	}
 
-	err := ctx.DB.Event().CreateHistoryEvent(hisData)
+	queryCtx, cancel := context.WithTimeout(requestCtx, 10*time.Second)
+	defer cancel()
+	err := ctx.DB.Event().CreateHistoryEvent(queryCtx, hisData)
 	if err != nil {
-		return fmt.Errorf("RecordAlertHisEvent, 恢复告警记录失败, err: %s", err)
+		return fmt.Errorf("RecordAlertHisEvent, 恢复告警记录失败: %w", err)
 	}
 
 	return nil
