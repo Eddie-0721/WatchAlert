@@ -44,7 +44,7 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 	if strings.TrimSpace(req.Content) == "" {
 		return fmt.Errorf("对话内容不能为空")
 	}
-	detail, err := a.GetSession(tenantId, userId, req.SessionId)
+	detail, err := a.loadRunHistory(requestCtx, tenantId, userId, req.SessionId)
 	if err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	if strings.TrimSpace(req.Content) == "" {
 		return models.AgentMessage{}, fmt.Errorf("对话内容不能为空")
 	}
-	detail, err := a.GetSession(tenantId, userId, req.SessionId)
+	detail, err := a.loadRunHistory(requestCtx, tenantId, userId, req.SessionId)
 	if err != nil {
 		return models.AgentMessage{}, err
 	}

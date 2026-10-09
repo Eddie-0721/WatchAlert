@@ -266,3 +266,7 @@ go test -count=1 ./api ./internal/middleware ./internal/repo ./internal/services
 - 以上是操作次数、加载行为与功能验证，没有声称生产接口耗时提升比例。未连接生产 MySQL/Redis、未做线上压测、未构建容器；Monaco 总包大小本批未缩减。
 
 后续待处理：规则评估重复全量扫描与并发限制、Prometheus 总结果预算及取消传播、Agent 会话/上下文/连接复用、Copilot 流式 Markdown 渲染、数据库索引与容量验证。本批没有宣布全部性能问题解决。
+
+## 9. 性能优化第二批（2026-10-10）
+
+Prometheus Agent 查询预算/取消、有限模型历史、独立 Agent 的运行/并发/工具结果预算及连接释放、Copilot 流式更新和代码高亮体积优化已完成本地验证。详细改动、25 项 Agent 测试、12 项浏览器回归、后端测试范围、部署兼容及剩余工作见 [运行预算与 Copilot 渲染记录](PERFORMANCE-RUNTIME-2026-10-10.md)。未部署生产，未宣布全系统性能优化完成。

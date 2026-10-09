@@ -257,7 +257,7 @@ type agentPrometheusQuery struct {
 	Step         int64  `json:"step"`
 }
 
-func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[string]interface{}, claims agenttoken.Claims, isRange bool) (interface{}, error) {
+func (a *agentToolService) queryPrometheus(requestCtx context.Context, arguments map[string]interface{}, claims agenttoken.Claims, isRange bool) (interface{}, error) {
 	var request agentPrometheusQuery
 	if err := decodeAgentArguments(arguments, &request); err != nil {
 		return nil, err
@@ -281,12 +281,9 @@ func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[stri
 	if len(claims.DatasourceIds) > 0 && !containsTool(claims.DatasourceIds, source.ID) {
 		return nil, fmt.Errorf("当前 Copilot 环境范围不允许访问该数据源")
 	}
-	client, err := provider.NewPrometheusClient(source)
-	if err != nil {
-		return nil, err
-	}
+	budget := provider.QueryBudget{MaxSamples: agentPrometheusMaxResultRows, MaxBytes: 4 << 20}
 	if !isRange {
-		metrics, err := client.Query(request.PromQL)
+		metrics, err := provider.BoundedPrometheusQuery(requestCtx, source, request.PromQL, time.Time{}, time.Time{}, 0, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -303,14 +300,17 @@ func (a *agentToolService) queryPrometheus(_ context.Context, arguments map[stri
 	if !start.Before(end) || end.Sub(start) > agentPrometheusMaxRange {
 		return nil, fmt.Errorf("Prometheus 查询时间范围必须大于 0 且不超过 %s", agentPrometheusMaxRange)
 	}
+	if request.Step < 0 || request.Step > int64(agentPrometheusMaxRange/time.Second) {
+		return nil, fmt.Errorf("Prometheus step 必须介于 0 和 21600 秒之间")
+	}
 	step := time.Duration(request.Step) * time.Second
 	if step <= 0 {
 		step = 30 * time.Second
 	}
-	if points := int(end.Sub(start) / step); points > agentPrometheusMaxPoints {
+	if points := int(end.Sub(start)/step) + 1; points > agentPrometheusMaxPoints {
 		return nil, fmt.Errorf("Prometheus 查询数据点超过上限 %d，请增大 step 或缩小范围", agentPrometheusMaxPoints)
 	}
-	metrics, err := client.QueryRange(request.PromQL, start, end, step)
+	metrics, err := provider.BoundedPrometheusQuery(requestCtx, source, request.PromQL, start, end, step, budget)
 	if err != nil {
 		return nil, err
 	}

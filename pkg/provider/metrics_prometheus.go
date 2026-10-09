@@ -44,6 +44,7 @@ type authenticatedTransport struct {
 
 // RoundTrip 实现 http.RoundTripper 接口
 func (t *authenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
 	if t.Username != "" && t.Password != "" {
 		req.SetBasicAuth(t.Username, t.Password)
 	}
@@ -52,25 +53,34 @@ func (t *authenticatedTransport) RoundTrip(req *http.Request) (*http.Response, e
 		req.Header.Set(key, value)
 	}
 
-	return t.Transport.RoundTrip(req)
+	response, err := t.Transport.RoundTrip(req)
+	if err == nil {
+		if limit, ok := req.Context().Value(prometheusBodyBudgetKey{}).(int64); ok && limit > 0 {
+			response.Body = &budgetBody{ReadCloser: response.Body, remaining: limit}
+		}
+	}
+	return response, err
+}
+
+// Connections are pooled across requests; authorization remains request-local.
+var prometheusTransport = &http.Transport{
+	Proxy:               http.ProxyFromEnvironment,
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+	TLSHandshakeTimeout: 10 * time.Second,
 }
 
 func NewPrometheusClient(ds models.AlertDataSource) (MetricsFactoryProvider, error) {
-	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	}
+	return newPrometheusProvider(ds)
+}
 
-	var roundTripper http.RoundTripper = transport
-	if ds.Auth.User != "" || ds.Auth.Pass != "" || len(ds.HTTP.Headers) > 0 {
-		roundTripper = &authenticatedTransport{
-			Transport: transport,
-			Username:  ds.Auth.User,
-			Password:  ds.Auth.Pass,
-			Headers:   ds.HTTP.Headers,
-		}
+func newPrometheusProvider(ds models.AlertDataSource) (PrometheusProvider, error) {
+	roundTripper := &authenticatedTransport{
+		Transport: prometheusTransport,
+		Username:  ds.Auth.User,
+		Password:  ds.Auth.Pass,
+		Headers:   ds.HTTP.Headers,
 	}
 
 	clientConfig := api.Config{
@@ -80,7 +90,7 @@ func NewPrometheusClient(ds models.AlertDataSource) (MetricsFactoryProvider, err
 
 	client, err := api.NewClient(clientConfig)
 	if err != nil {
-		return nil, err
+		return PrometheusProvider{}, err
 	}
 
 	return PrometheusProvider{
@@ -113,9 +123,13 @@ type MetricResult struct {
 }
 
 func (v PrometheusProvider) Query(promQL string) ([]Metrics, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(v.Timeout)*time.Second)
+	return v.query(context.Background(), promQL, QueryBudget{})
+}
+
+func (v PrometheusProvider) query(parent context.Context, promQL string, budget QueryBudget) ([]Metrics, error) {
+	ctx, cancel := v.queryContext(parent, budget)
 	defer cancel()
-	result, warnings, err := v.client.Query(ctx, promQL, time.Now(), v1.WithTimeout(time.Duration(v.Timeout)*time.Second))
+	result, warnings, err := v.client.Query(ctx, promQL, time.Now(), budget.options(v.Timeout)...)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +140,9 @@ func (v PrometheusProvider) Query(promQL string) ([]Metrics, error) {
 	if !ok {
 		return nil, fmt.Errorf("Prometheus instant query did not return a vector")
 	}
+	if budget.MaxSamples > 0 && len(vector) > budget.MaxSamples {
+		return nil, fmt.Errorf("Prometheus result exceeds %d samples; narrow the query", budget.MaxSamples)
+	}
 	for _, sample := range vector {
 		if sample == nil || math.IsNaN(float64(sample.Value)) || math.IsInf(float64(sample.Value), 0) {
 			return nil, fmt.Errorf("Prometheus query returned invalid samples")
@@ -135,7 +152,11 @@ func (v PrometheusProvider) Query(promQL string) ([]Metrics, error) {
 }
 
 func (v PrometheusProvider) QueryRange(promQL string, start, end time.Time, step time.Duration) ([]Metrics, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(v.Timeout)*time.Second)
+	return v.queryRange(context.Background(), promQL, start, end, step, QueryBudget{})
+}
+
+func (v PrometheusProvider) queryRange(parent context.Context, promQL string, start, end time.Time, step time.Duration, budget QueryBudget) ([]Metrics, error) {
+	ctx, cancel := v.queryContext(parent, budget)
 	defer cancel()
 
 	r := v1.Range{
@@ -144,12 +165,29 @@ func (v PrometheusProvider) QueryRange(promQL string, start, end time.Time, step
 		Step:  step,
 	}
 
-	result, _, err := v.client.QueryRange(ctx, promQL, r, v1.WithTimeout(time.Duration(v.Timeout)*time.Second))
+	result, warnings, err := v.client.QueryRange(ctx, promQL, r, budget.options(v.Timeout)...)
 	if err != nil {
 		return nil, err
 	}
 
-	return Matrix(result), nil
+	if len(warnings) > 0 {
+		return nil, fmt.Errorf("Prometheus range query returned warnings; result may be incomplete")
+	}
+	matrix, ok := result.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("Prometheus range query did not return a matrix")
+	}
+	count := 0
+	for _, stream := range matrix {
+		if stream == nil {
+			return nil, fmt.Errorf("Prometheus returned a nil series")
+		}
+		count += len(stream.Values)
+		if budget.MaxSamples > 0 && count > budget.MaxSamples {
+			return nil, fmt.Errorf("Prometheus result exceeds %d total samples; narrow the query or increase step", budget.MaxSamples)
+		}
+	}
+	return Matrix(matrix), nil
 }
 
 func Vectors(value model.Value) []Metrics {
