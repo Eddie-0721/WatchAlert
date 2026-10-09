@@ -1,6 +1,7 @@
 package process
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,17 @@ func BuildEvent(rule models.AlertRule, labels func() map[string]interface{}) mod
 }
 
 func PushEventToFaultCenter(ctx *ctx.Context, event *models.AlertCurEvent) {
+	parent := ctx.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	PushEventToFaultCenterContext(parent, ctx, event)
+}
+
+func PushEventToFaultCenterContext(requestCtx context.Context, ctx *ctx.Context, event *models.AlertCurEvent) {
+	if requestCtx.Err() != nil {
+		return
+	}
 	if event == nil {
 		return
 	}
@@ -40,6 +52,9 @@ func PushEventToFaultCenter(ctx *ctx.Context, event *models.AlertCurEvent) {
 
 	ctx.Mux.Lock()
 	defer ctx.Mux.Unlock()
+	if requestCtx.Err() != nil {
+		return
+	}
 	if len(event.TenantId) <= 0 || len(event.Fingerprint) <= 0 {
 		return
 	}
@@ -81,6 +96,9 @@ func PushEventToFaultCenter(ctx *ctx.Context, event *models.AlertCurEvent) {
 	}
 
 	// 更新缓存
+	if requestCtx.Err() != nil {
+		return
+	}
 	cache.Alert().PushAlertEvent(event)
 }
 

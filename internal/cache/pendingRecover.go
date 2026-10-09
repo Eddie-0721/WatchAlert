@@ -3,8 +3,8 @@ package cache
 import (
 	"fmt"
 	"github.com/go-redis/redis"
+	"strconv"
 	"sync"
-	"watchAlert/pkg/tools"
 )
 
 type (
@@ -20,6 +20,7 @@ type (
 		Get(tenantId, ruleId, fingerprint string) (int64, error)
 		Delete(tenantId, ruleId, fingerprint string)
 		List(tenantId, ruleId string) map[string]int64
+		ListWithError(tenantId, ruleId string) (map[string]int64, error)
 	}
 
 	PendingRecoverCacheKey string
@@ -59,20 +60,29 @@ func (p *PendingRecoverCache) Delete(tenantId, ruleId, fingerprint string) {
 }
 
 func (p *PendingRecoverCache) List(tenantId, ruleId string) map[string]int64 {
+	result, _ := p.ListWithError(tenantId, ruleId)
+	return result
+}
+
+func (p *PendingRecoverCache) ListWithError(tenantId, ruleId string) (map[string]int64, error) {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 
 	result, err := p.rc.HGetAll(string(BuildPendingRecoverCacheKey(tenantId, ruleId))).Result()
 	if err != nil {
-		return map[string]int64{}
+		return nil, err
 	}
 
 	var newMap = make(map[string]int64)
 	for k, v := range result {
-		newMap[k] = tools.ConvertStringToInt64(v)
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid recovery timestamp for fingerprint %s", k)
+		}
+		newMap[k] = parsed
 	}
 
-	return newMap
+	return newMap, nil
 }
 
 func BuildPendingRecoverCacheKey(tenantId, ruleId string) PendingRecoverCacheKey {

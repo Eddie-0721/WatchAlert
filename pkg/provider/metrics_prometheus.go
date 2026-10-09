@@ -126,6 +126,11 @@ func (v PrometheusProvider) Query(promQL string) ([]Metrics, error) {
 	return v.query(context.Background(), promQL, QueryBudget{})
 }
 
+// QueryContext allows rule cancellation to reach the active HTTP request.
+func (v PrometheusProvider) QueryContext(ctx context.Context, promQL string) ([]Metrics, error) {
+	return v.query(ctx, promQL, QueryBudget{})
+}
+
 func (v PrometheusProvider) query(parent context.Context, promQL string, budget QueryBudget) ([]Metrics, error) {
 	ctx, cancel := v.queryContext(parent, budget)
 	defer cancel()

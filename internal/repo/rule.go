@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"watchAlert/internal/models"
 
 	"gorm.io/gorm"
@@ -20,6 +21,7 @@ type (
 		Delete(tenantId, ruleId string) error
 		GetRuleIsExist(ruleId string) bool
 		GetRuleObject(ruleId string) models.AlertRule
+		IsEnabled(context.Context, string, string) (bool, error)
 		ChangeStatus(tenantId, ruleGroupId, ruleId string, state *bool) error
 	}
 )
@@ -172,6 +174,12 @@ func (rr RuleRepo) GetRuleObject(ruleId string) models.AlertRule {
 		First(&data)
 
 	return data
+}
+
+func (rr RuleRepo) IsEnabled(ctx context.Context, tenantID, ruleID string) (bool, error) {
+	var row struct{ Enabled *bool }
+	err := rr.DB().WithContext(ctx).Model(&models.AlertRule{}).Select("enabled").Where("tenant_id = ? AND rule_id = ?", tenantID, ruleID).Take(&row).Error
+	return err == nil && row.Enabled != nil && *row.Enabled, err
 }
 
 func (rr RuleRepo) ChangeStatus(tenantId, ruleGroupId, ruleId string, state *bool) error {

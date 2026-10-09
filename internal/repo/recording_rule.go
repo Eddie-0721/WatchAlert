@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"watchAlert/internal/models"
 
 	"gorm.io/gorm"
@@ -18,6 +19,7 @@ type (
 		Update(r models.RecordingRule) error
 		Delete(tenantId, ruleId string) error
 		GetRuleObject(ruleId string) models.RecordingRule
+		IsEnabled(context.Context, string, string) (bool, error)
 		ChangeStatus(tenantId, ruleId string, state *bool) error
 	}
 )
@@ -29,6 +31,12 @@ func newRecordingRuleInterface(db *gorm.DB, g InterGormDBCli) InterRecordingRule
 			db: db,
 		},
 	}
+}
+
+func (rr RecordingRuleRepo) IsEnabled(ctx context.Context, tenantID, ruleID string) (bool, error) {
+	var row struct{ Enabled *bool }
+	err := rr.DB().WithContext(ctx).Model(&models.RecordingRule{}).Select("enabled").Where("tenant_id = ? AND rule_id = ?", tenantID, ruleID).Take(&row).Error
+	return err == nil && row.Enabled != nil && *row.Enabled, err
 }
 
 func (rr RecordingRuleRepo) Get(tenantId, ruleId string) (models.RecordingRule, error) {

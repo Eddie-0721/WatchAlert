@@ -12,6 +12,10 @@ import (
 )
 
 func MetricDataQuery(client *cloudwatch.Client, query CloudWatchQuery) ([]time.Time, []float64, error) {
+	return MetricDataQueryContext(context.Background(), client, query)
+}
+
+func MetricDataQueryContext(parent context.Context, client *cloudwatch.Client, query CloudWatchQuery) ([]time.Time, []float64, error) {
 	input := &cloudwatch.GetMetricDataInput{
 		MetricDataQueries: []types.MetricDataQuery{
 			{
@@ -35,7 +39,7 @@ func MetricDataQuery(client *cloudwatch.Client, query CloudWatchQuery) ([]time.T
 		StartTime: aws.Time(query.Form),
 		EndTime:   aws.Time(query.To),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	output, err := client.GetMetricData(ctx, input)
 	if err != nil {

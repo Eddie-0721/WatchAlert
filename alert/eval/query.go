@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ import (
 )
 
 // Metrics Prometheus 数据源
-func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
+func metrics(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	pools := ctx.Redis.ProviderPools()
 	var (
 		resQuery       []provider.Metrics
@@ -36,7 +37,7 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 
 	switch datasourceType {
 	case provider.PrometheusDsProvider:
-		resQuery, err = cli.(provider.PrometheusProvider).Query(rule.PrometheusConfig.PromQL)
+		resQuery, err = cli.(provider.PrometheusProvider).QueryContext(requestCtx, rule.PrometheusConfig.PromQL)
 		if err != nil {
 			logc.Errorf(ctx.Ctx, "Prometheus查询失败, 规则ID: %s, 规则名称: %s, 数据源ID: %s, PromQL: %s, 错误: %v", rule.RuleId, rule.RuleName, datasourceId, rule.PrometheusConfig.PromQL, err)
 			return failedEvaluation("query_failed")
@@ -60,16 +61,26 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 	if len(rules) == 0 {
 		return failedEvaluation("missing_conditions")
 	}
-	for _, condition := range rules {
-		if _, _, err := process.ProcessRuleExpr(condition.Expr); err != nil {
+	type compiledCondition struct {
+		operator string
+		value    float64
+	}
+	compiled := make([]compiledCondition, len(rules))
+	for i, condition := range rules {
+		operator, value, err := process.ProcessRuleExpr(condition.Expr)
+		if err != nil {
 			return failedEvaluation("invalid_condition")
 		}
+		compiled[i] = compiledCondition{operator, value}
 	}
 	if len(resQuery) == 0 {
 		return completeEvaluation(nil)
 	}
 
 	for _, v := range resQuery {
+		if requestCtx.Err() != nil {
+			return failedEvaluation("cancelled")
+		}
 		// 避免共享引用导致的指纹不一致问题
 		metricLabels := make(map[string]interface{})
 		for k, val := range v.GetMetric() {
@@ -85,18 +96,21 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 		fingerprintLabels["rule_name"] = rule.RuleName
 
 		// 遍历按优先级排序后的规则
-		for _, ruleExpr := range rules {
+		for i, ruleExpr := range rules {
 			fingerprintLabels["severity"] = ruleExpr.Severity
-			operator, value, err := process.ProcessRuleExpr(ruleExpr.Expr)
-			if err != nil {
-				logc.Errorf(ctx.Ctx, "处理规则表达式失败, 规则ID: %s, 规则名称: %s, 表达式: %s, 错误: %v", rule.RuleId, rule.RuleName, ruleExpr.Expr, err)
-				continue
-			}
+			operator, value := compiled[i].operator, compiled[i].value
 
 			fingerprintMetric := provider.Metrics{
 				Labels: fingerprintLabels,
 			}
 			fingerprint := fingerprintMetric.GetFingerprint()
+			cachedEvent, cacheErr := ctx.Redis.Alert().GetEventFromCache(rule.TenantId, rule.FaultCenterId, fingerprint)
+			triggered := process.EvalCondition(models.EvalCondition{Operator: operator, QueryValue: v.Value, ExpectedValue: value})
+			// No active event and no threshold crossing: avoid building annotations
+			// and serializing a complete event that will immediately be discarded.
+			if !triggered && (cacheErr != nil || cachedEvent.IsRecovered || cachedEvent.Status == models.StateRecovered) {
+				continue
+			}
 
 			event := process.BuildEvent(rule, func() map[string]interface{} {
 				newMetric := make(map[string]interface{})
@@ -115,9 +129,8 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 				}
 
 				// 获取初次触发值
-				data, err := ctx.Redis.Alert().GetEventFromCache(rule.TenantId, rule.FaultCenterId, fingerprint)
-				if err == nil && data.Labels["first_value"] != nil {
-					newMetric["first_value"] = data.Labels["first_value"]
+				if cacheErr == nil && cachedEvent.Labels["first_value"] != nil {
+					newMetric["first_value"] = cachedEvent.Labels["first_value"]
 				} else {
 					newMetric["first_value"] = v.Value
 				}
@@ -133,11 +146,7 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 			event.Status = models.StatePreAlert
 
 			// 告警评估
-			if process.EvalCondition(models.EvalCondition{
-				Operator:      operator,
-				QueryValue:    v.Value,
-				ExpectedValue: value,
-			}) {
+			if triggered {
 				if len(highestPriorityEvents) > 0 {
 					// 如果有高优先级告警，则抑制掉低级告警
 					event.LastSendTime = time.Now().Unix()
@@ -148,7 +157,7 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 				if len(rule.PrometheusConfig.CallbakPromQLs) > 0 {
 					for _, callbak := range rule.PrometheusConfig.CallbakPromQLs {
 						ql := tools.ParserVariables(callbak.Value, map[string]interface{}{"labels": event.Labels})
-						callbakQuery, err := cli.(provider.PrometheusProvider).Query(ql)
+						callbakQuery, err := cli.(provider.PrometheusProvider).QueryContext(requestCtx, ql)
 						if err != nil {
 							logc.Errorf(ctx.Ctx, "query callback promql error: %v, callback_key: %s, callback_promql: %s", err, callbak.Key, callbak.Value)
 						}
@@ -159,17 +168,12 @@ func metrics(ctx *ctx.Context, datasourceId, datasourceType string, rule models.
 					}
 				}
 
-				process.PushEventToFaultCenter(ctx, &event)
+				process.PushEventToFaultCenterContext(requestCtx, ctx, &event)
 				curFingerprints = append(curFingerprints, fingerprint)
 			} else {
 				// 更新恢复时最新值
-				cache, err := ctx.Redis.Alert().GetEventFromCache(event.TenantId, event.FaultCenterId, event.Fingerprint)
-				if err == nil {
-					if !cache.IsRecovered && cache.Status != models.StateRecovered {
-						event.Labels["value"] = v.GetValue()
-						process.PushEventToFaultCenter(ctx, &event)
-					}
-				}
+				event.Labels["value"] = v.GetValue()
+				process.PushEventToFaultCenterContext(requestCtx, ctx, &event)
 			}
 		}
 	}
@@ -211,7 +215,7 @@ func getPriorityValue(severity string) int {
 }
 
 // Logs 包含 AliSLS、Loki、ElasticSearch 数据源
-func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
+func logs(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var (
 		// 日志信息
 		log provider.Logs
@@ -426,14 +430,14 @@ func logs(ctx *ctx.Context, datasourceId, datasourceType string, rule models.Ale
 
 	// 评估告警条件
 	if process.EvalCondition(evalOptions) {
-		process.PushEventToFaultCenter(ctx, event())
+		process.PushEventToFaultCenterContext(requestCtx, ctx, event())
 	}
 
 	return completeEvaluation(curFingerprints)
 }
 
 // Traces 包含 Jaeger 数据源
-func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
+func traces(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var (
 		queryRes       []provider.Traces
 		externalLabels map[string]interface{}
@@ -490,13 +494,13 @@ func traces(ctx *ctx.Context, datasourceId, datasourceType string, rule models.A
 		event.Annotations = fmt.Sprintf("服务: %s 链路中存在异常, TraceId: %s", rule.JaegerConfig.Service, v.TraceId)
 
 		curFingerprints = append(curFingerprints, event.Fingerprint)
-		process.PushEventToFaultCenter(ctx, &event)
+		process.PushEventToFaultCenterContext(requestCtx, ctx, &event)
 	}
 
 	return completeEvaluation(curFingerprints)
 }
 
-func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
+func cloudWatch(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	var externalLabels map[string]interface{}
 	pools := ctx.Redis.ProviderPools()
 	cfg, err := pools.GetClient(datasourceId)
@@ -526,7 +530,7 @@ func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule mode
 			Form:       startsAt,
 			To:         curAt,
 		}
-		_, values, err := cloudwatch.MetricDataQuery(cli, query)
+		_, values, err := cloudwatch.MetricDataQueryContext(requestCtx, cli, query)
 		if err != nil {
 			return failedEvaluation("query_failed")
 		}
@@ -558,14 +562,14 @@ func cloudWatch(ctx *ctx.Context, datasourceId, datasourceType string, rule mode
 
 		if process.EvalCondition(options) {
 			curFingerprints = append(curFingerprints, event.Fingerprint)
-			process.PushEventToFaultCenter(ctx, &event)
+			process.PushEventToFaultCenterContext(requestCtx, ctx, &event)
 		}
 	}
 
 	return completeEvaluation(curFingerprints)
 }
 
-func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
+func kubernetesEvent(requestCtx context.Context, ctx *ctx.Context, datasourceId, datasourceType string, rule models.AlertRule) evaluationResult {
 	// 获取数据源实例信息
 	datasourceObj, err := ctx.DB.Datasource().GetForTenant(rule.TenantId, datasourceId)
 	if err != nil {
@@ -581,6 +585,7 @@ func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule
 	}
 
 	k8sClient := cli.(provider.KubernetesClient)
+	k8sClient.Ctx = requestCtx
 	externalLabels := k8sClient.GetExternalLabels()
 
 	// 查询 Kubernetes 事件
@@ -639,7 +644,7 @@ func kubernetesEvent(ctx *ctx.Context, datasourceId, datasourceType string, rule
 			)
 
 			// 推送到故障中心
-			process.PushEventToFaultCenter(ctx, &event)
+			process.PushEventToFaultCenterContext(requestCtx, ctx, &event)
 			curFingerprints = append(curFingerprints, fingerprint)
 		}
 

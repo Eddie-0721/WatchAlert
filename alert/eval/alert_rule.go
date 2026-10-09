@@ -4,15 +4,14 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
-	"slices"
 	"sync"
 	"time"
+	"watchAlert/config"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/provider"
 	"watchAlert/pkg/tools"
 
-	"github.com/go-redis/redis"
 	"github.com/zeromicro/go-zero/core/logc"
 )
 
@@ -36,7 +35,7 @@ const (
 )
 
 // 数据源处理器映射
-var datasourceHandlers = map[string]func(*ctx.Context, string, string, models.AlertRule) evaluationResult{
+var datasourceHandlers = map[string]func(context.Context, *ctx.Context, string, string, models.AlertRule) evaluationResult{
 	DatasourceTypePrometheus:      metrics,
 	DatasourceTypeAliCloudSLS:     logs,
 	DatasourceTypeLoki:            logs,
@@ -63,6 +62,7 @@ type (
 	AlertRule struct {
 		ctx          *ctx.Context
 		lastComplete sync.Map
+		querySlots   chan struct{}
 	}
 )
 
@@ -76,7 +76,11 @@ func (t *AlertRule) Submit(rule models.AlertRule) {
 	t.ctx.Mux.Lock()
 	defer t.ctx.Mux.Unlock()
 
-	c, cancel := context.WithCancel(context.Background())
+	if previous, exists := t.ctx.ContextMap[rule.RuleId]; exists {
+		previous()
+	}
+	t.lastComplete.Delete(rule.RuleId)
+	c, cancel := context.WithCancel(t.ctx.Ctx)
 	t.ctx.ContextMap[rule.RuleId] = cancel
 	go t.Eval(c, rule)
 }
@@ -112,7 +116,9 @@ func (t *AlertRule) Eval(ctx context.Context, rule models.AlertRule) {
 			// 获取调用栈信息
 			stack := debug.Stack()
 			logc.Errorf(t.ctx.Ctx, "Recovered from rule eval goroutine panic: %s, RuleName: %s, RuleId: %s\n%s", r, rule.RuleName, rule.RuleId, stack)
-			t.Restart(rule)
+			if ctx.Err() == nil {
+				t.Restart(rule)
+			}
 		}
 	}()
 
@@ -122,7 +128,7 @@ func (t *AlertRule) Eval(ctx context.Context, rule models.AlertRule) {
 			// 处理任务信号量
 			taskChan <- struct{}{}
 			logc.Infof(t.ctx.Ctx, fmt.Sprintf("Handle eval task, RuleId: %v, RuleName: %s", rule.RuleId, rule.RuleName))
-			t.executeTask(rule, taskChan)
+			t.executeTask(ctx, rule, taskChan)
 		case <-ctx.Done():
 			logc.Infof(t.ctx.Ctx, fmt.Sprintf("Stop eval task, RuleId: %v, RuleName: %s", rule.RuleId, rule.RuleName))
 			return
@@ -132,20 +138,21 @@ func (t *AlertRule) Eval(ctx context.Context, rule models.AlertRule) {
 }
 
 // executeTask 执行评估任务
-func (t *AlertRule) executeTask(rule models.AlertRule, taskChan chan struct{}) {
+func (t *AlertRule) executeTask(requestCtx context.Context, rule models.AlertRule, taskChan chan struct{}) {
 	defer func() {
 		// 释放任务信号量
 		<-taskChan
 	}()
 
 	// 在规则评估前检查是否仍然启用
-	if !t.isRuleEnabled(rule.RuleId) {
+	if requestCtx.Err() != nil || !t.isRuleEnabled(requestCtx, rule.TenantId, rule.RuleId) {
+		t.lastComplete.Delete(rule.RuleId)
 		return
 	}
 
 	// 并发处理数据源
-	result := t.processDatasources(rule)
-	if result.Status != "complete" {
+	result := t.processDatasources(requestCtx, rule)
+	if requestCtx.Err() != nil || result.Status != "complete" {
 		t.lastComplete.Delete(rule.RuleId)
 		logc.Errorf(t.ctx.Ctx, "Rule evaluation incomplete; recovery skipped. RuleId: %s, Reason: %s", rule.RuleId, result.Reason)
 		return
@@ -153,43 +160,51 @@ func (t *AlertRule) executeTask(rule models.AlertRule, taskChan chan struct{}) {
 
 	// 处理恢复逻辑
 	_, consecutive := t.lastComplete.LoadOrStore(rule.RuleId, true)
-	t.recoverComplete(rule.TenantId, rule.RuleId,
+	t.recoverCompleteContext(requestCtx, rule.TenantId, rule.RuleId,
 		models.BuildAlertEventCacheKey(rule.TenantId, rule.FaultCenterId),
 		models.BuildFaultCenterInfoCacheKey(rule.TenantId, rule.FaultCenterId),
 		result.Fingerprints, !consecutive)
 }
 
 // processDatasources 处理数据源
-func (t *AlertRule) processDatasources(rule models.AlertRule) evaluationResult {
-	var (
-		results         []evaluationResult
-		fingerprintChan = make(chan evaluationResult, len(rule.DatasourceIdList))
-		wg              sync.WaitGroup
-	)
-
-	// 启动工作协程
-	for _, dsId := range rule.DatasourceIdList {
+func (t *AlertRule) processDatasources(requestCtx context.Context, rule models.AlertRule) evaluationResult {
+	results := make([]evaluationResult, len(rule.DatasourceIdList))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	workers := min(len(rule.DatasourceIdList), boundedSetting(config.Application.Evaluation.MaxDatasourcesPerRule, 4, 32))
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(dsId string) {
+		go func() {
 			defer wg.Done()
-			fingerprintChan <- t.processSingleDatasource(dsId, rule)
-		}(dsId)
+			for index := range jobs {
+				results[index] = t.processSingleDatasource(requestCtx, rule.DatasourceIdList[index], rule)
+			}
+		}()
 	}
-
-	go func() {
-		wg.Wait()
-		close(fingerprintChan)
-	}()
-
-	for result := range fingerprintChan {
-		results = append(results, result)
+	for index := range rule.DatasourceIdList {
+		select {
+		case jobs <- index:
+		case <-requestCtx.Done():
+			close(jobs)
+			wg.Wait()
+			return failedEvaluation("cancelled")
+		}
 	}
-
+	close(jobs)
+	wg.Wait()
 	return combineEvaluations(results)
 }
 
 // processSingleDatasource 处理单个数据源
-func (t *AlertRule) processSingleDatasource(dsId string, rule models.AlertRule) (result evaluationResult) {
+func (t *AlertRule) processSingleDatasource(requestCtx context.Context, dsId string, rule models.AlertRule) (result evaluationResult) {
+	slots := t.querySlots
+	if slots == nil {
+		slots = sharedQuerySlots()
+	}
+	if !acquireQuery(requestCtx, slots) {
+		return failedEvaluation("cancelled")
+	}
+	defer func() { <-slots }()
 	defer func() {
 		if recover() != nil {
 			// A worker panic must neither terminate the process nor look like recovery.
@@ -211,9 +226,13 @@ func (t *AlertRule) processSingleDatasource(dsId string, rule models.AlertRule) 
 	}
 
 	// 检查数据源健康状态
-	if ok, _ := provider.CheckDatasourceHealth(instance); !ok {
-		logc.Errorf(t.ctx.Ctx, "Datasource %s is unhealthy", dsId)
-		return failedEvaluation("datasource_unhealthy")
+	// Prometheus' actual query already validates HTTP and result completeness.
+	// Keep other providers' preflight until their error semantics are audited.
+	if instance.Type != DatasourceTypePrometheus {
+		if ok, _ := provider.CheckDatasourceHealth(instance); !ok {
+			logc.Errorf(t.ctx.Ctx, "Datasource %s is unhealthy", dsId)
+			return failedEvaluation("datasource_unhealthy")
+		}
 	}
 
 	// 调用处理器
@@ -223,7 +242,10 @@ func (t *AlertRule) processSingleDatasource(dsId string, rule models.AlertRule) 
 		return failedEvaluation("unsupported_datasource")
 	}
 
-	return handler(t.ctx, dsId, instance.Type, rule)
+	if requestCtx.Err() != nil {
+		return failedEvaluation("cancelled")
+	}
+	return handler(requestCtx, t.ctx, dsId, instance.Type, rule)
 }
 
 // getEvalTimeDuration 获取评估时间间隔
@@ -236,6 +258,14 @@ func (t *AlertRule) Recover(tenantId, ruleId string, eventCacheKey models.AlertE
 }
 
 func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey models.AlertEventCacheKey, faultCenterInfoKey models.FaultCenterInfoCacheKey, curFingerprints []string, restartWindow bool) {
+	t.recoverCompleteContext(context.Background(), tenantId, ruleId, eventCacheKey, faultCenterInfoKey, curFingerprints, restartWindow)
+}
+
+func (t *AlertRule) recoverCompleteContext(requestCtx context.Context, tenantId, ruleId string, eventCacheKey models.AlertEventCacheKey, faultCenterInfoKey models.FaultCenterInfoCacheKey, curFingerprints []string, restartWindow bool) {
+	if requestCtx.Err() != nil {
+		t.lastComplete.Delete(ruleId)
+		return
+	}
 	// 过滤空指纹
 	var filteredCurFingerprints []string
 	for _, fp := range curFingerprints {
@@ -244,6 +274,10 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 		}
 	}
 	curFingerprints = filteredCurFingerprints
+	current := make(map[string]struct{}, len(curFingerprints))
+	for _, fingerprint := range curFingerprints {
+		current[fingerprint] = struct{}{}
+	}
 
 	// 校验 key 非空
 	if eventCacheKey == "" || faultCenterInfoKey == "" {
@@ -259,11 +293,23 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 		return
 	}
 
+	// Load the recovery timestamps once. A read/decode failure is not an empty
+	// recovery window and must not cause state transitions.
+	pendingFingerprints, err := t.ctx.Redis.PendingRecover().ListWithError(tenantId, ruleId)
+	if err != nil {
+		t.lastComplete.Delete(ruleId)
+		logc.Errorf(t.ctx.Ctx, "Failed to read recovery timestamps, RuleId: %s", ruleId)
+		return
+	}
 	// 存储当前规则下所有活动的指纹
 	var activeRuleFingerprints []string
 
 	// 筛选当前规则相关的指纹，并处理预告警状态
 	for fingerprint, event := range events {
+		if requestCtx.Err() != nil {
+			t.lastComplete.Delete(ruleId)
+			return
+		}
 		if fingerprint == "" {
 			continue
 		}
@@ -273,7 +319,8 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 		}
 
 		// 移除状态为预告警且当前告警列表中不存在的事件
-		if event.Status == models.StatePreAlert && !slices.Contains(curFingerprints, fingerprint) {
+		_, stillActive := current[fingerprint]
+		if event.Status == models.StatePreAlert && !stillActive {
 			t.ctx.Redis.Alert().RemoveAlertEvent(event.TenantId, event.FaultCenterId, event.Fingerprint)
 			continue
 		}
@@ -286,9 +333,12 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 	*/
 
 	// 获取当前待恢复的告警指纹列表
-	pendingFingerprints := t.ctx.Redis.PendingRecover().List(tenantId, ruleId)
 	if len(pendingFingerprints) != 0 {
 		for _, fingerprint := range curFingerprints {
+			if requestCtx.Err() != nil {
+				t.lastComplete.Delete(ruleId)
+				return
+			}
 			if _, exists := pendingFingerprints[fingerprint]; !exists {
 				continue
 			}
@@ -321,6 +371,10 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 	curTime := time.Now().Unix()
 	recoverWaitTime := t.getRecoverWaitTime(faultCenterInfoKey)
 	for _, fingerprint := range recoverFingerprints {
+		if requestCtx.Err() != nil {
+			t.lastComplete.Delete(ruleId)
+			return
+		}
 		event, ok := events[fingerprint]
 		if !ok {
 			continue
@@ -328,8 +382,8 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 
 		newEvent := event
 		// 获取待恢复状态的时间戳
-		wTime, err := t.ctx.Redis.PendingRecover().Get(tenantId, ruleId, fingerprint)
-		if err == redis.Nil {
+		wTime, exists := pendingFingerprints[fingerprint]
+		if !exists {
 			// 转换状态, 标记为待恢复
 			if err := newEvent.TransitionStatus(models.StatePendingRecovery); err != nil {
 				logc.Errorf(t.ctx.Ctx, "Failed to transition to「pending_recovery」state for fingerprint %s: %v", fingerprint, err)
@@ -343,10 +397,6 @@ func (t *AlertRule) recoverComplete(tenantId, ruleId string, eventCacheKey model
 			if err := t.ctx.Redis.Alert().PushAlertEvent(newEvent); err != nil {
 				t.lastComplete.Delete(ruleId)
 			}
-			continue
-		} else if err != nil {
-			t.lastComplete.Delete(ruleId)
-			logc.Errorf(t.ctx.Ctx, "Failed to get「pending_recovery」time for fingerprint %s: %v", fingerprint, err)
 			continue
 		}
 
@@ -403,39 +453,17 @@ func (t *AlertRule) RestartAllEvals() {
 
 	logc.Info(t.ctx.Ctx, fmt.Sprintf("获取到 %d 个状态为启用的规则", count))
 
-	// 使用工作池限制并发数量
-	const maxWorkers = 10
-	wg := sync.WaitGroup{}
-	semaphore := make(chan struct{}, maxWorkers)
-
-	wg.Add(count)
+	// Submit only installs a timer. Query concurrency is controlled at runtime.
 	for _, rule := range ruleList {
-		rule := rule
-		go func() {
-			semaphore <- struct{}{}
-			defer func() {
-				wg.Done()
-				<-semaphore
-			}()
-
-			t.Submit(rule)
-		}()
+		t.Submit(rule)
 	}
-
-	wg.Wait()
-	close(semaphore)
 	logc.Info(t.ctx.Ctx, "所有规则评估器启动成功！")
 }
 
 // isRuleEnabled 检查规则是否启用
-func (t *AlertRule) isRuleEnabled(ruleId string) bool {
-	// 直接检查数据库或缓存中的当前启用状态
-	e := t.ctx.DB.Rule().GetRuleObject(ruleId).Enabled
-	if e == nil {
-		return false
-	}
-
-	return *e
+func (t *AlertRule) isRuleEnabled(requestCtx context.Context, tenantID, ruleID string) bool {
+	enabled, err := t.ctx.DB.Rule().IsEnabled(requestCtx, tenantID, ruleID)
+	return err == nil && enabled
 }
 
 // getRuleList 获取规则列表

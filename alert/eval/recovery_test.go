@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"watchAlert/internal/cache"
@@ -20,9 +21,13 @@ import (
 type evalDSRepo struct {
 	repo.InterDatasourceRepo
 	sources map[string]models.AlertDataSource
+	lookups *atomic.Int32
 }
 
 func (r evalDSRepo) GetForTenant(tenant, id string) (models.AlertDataSource, error) {
+	if r.lookups != nil {
+		r.lookups.Add(1)
+	}
 	ds, ok := r.sources[id]
 	if !ok || ds.TenantId != tenant {
 		return models.AlertDataSource{}, fmt.Errorf("not found")
@@ -31,6 +36,8 @@ func (r evalDSRepo) GetForTenant(tenant, id string) (models.AlertDataSource, err
 }
 
 type evalRuleRepo struct{ repo.InterRuleRepo }
+
+func (evalRuleRepo) IsEnabled(context.Context, string, string) (bool, error) { return true, nil }
 
 func (evalRuleRepo) GetRuleObject(id string) models.AlertRule {
 	enabled := true
@@ -76,12 +83,26 @@ func (m *memoryAlerts) RemoveAlertEvent(tenant, center, id string) { delete(m.ev
 
 type memoryPending struct {
 	cache.PendingRecoverCacheInterface
-	entries map[string]int64
-	failSet bool
+	entries             map[string]int64
+	failSet             bool
+	failList            bool
+	listReads, getReads int
 }
 
 func (m *memoryPending) List(string, string) map[string]int64 { return m.entries }
+func (m *memoryPending) ListWithError(string, string) (map[string]int64, error) {
+	m.listReads++
+	if m.failList {
+		return nil, fmt.Errorf("read failed")
+	}
+	result := make(map[string]int64, len(m.entries))
+	for k, v := range m.entries {
+		result[k] = v
+	}
+	return result, nil
+}
 func (m *memoryPending) Get(tenant, rule, id string) (int64, error) {
+	m.getReads++
 	v, ok := m.entries[id]
 	if !ok {
 		return 0, redis.Nil
@@ -127,7 +148,7 @@ func fixture(t *testing.T, mode string) (*AlertRule, models.AlertRule, *memoryAl
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if mode == "query_error" {
+		if mode == "query_error" || mode == "unhealthy" {
 			w.WriteHeader(503)
 			_, _ = w.Write([]byte(`{"status":"error","errorType":"timeout","error":"fixture timeout"}`))
 			return
@@ -191,7 +212,7 @@ func fixture(t *testing.T, mode string) (*AlertRule, models.AlertRule, *memoryAl
 func runOnce(e *AlertRule, r models.AlertRule) {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
-	e.executeTask(r, ch)
+	e.executeTask(context.Background(), r, ch)
 }
 
 func TestIncompleteEvaluationNeverRunsRecovery(t *testing.T) {

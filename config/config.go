@@ -16,7 +16,14 @@ type App struct {
 	// Agent contains only the connection settings for the internal Agent
 	// service. Model credentials remain in system settings and are never
 	// returned to the browser.
-	Agent Agent `json:"Agent"`
+	Agent      Agent      `json:"Agent"`
+	Evaluation Evaluation `json:"Evaluation"`
+}
+
+// Evaluation limits apply to running datasource queries, not just startup.
+type Evaluation struct {
+	MaxConcurrentQueries  int `json:"maxConcurrentQueries"`
+	MaxDatasourcesPerRule int `json:"maxDatasourcesPerRule"`
 }
 
 type Server struct {
