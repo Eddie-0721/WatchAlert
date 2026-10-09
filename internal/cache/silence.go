@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"github.com/bytedance/sonic"
 	"github.com/go-redis/redis"
 	"sync"
@@ -21,6 +22,8 @@ type (
 		RemoveAlertMute(tenantId, faultCenterId, id string) error
 		GetAlertMutes(tenantId, faultCenterId string) ([]string, error)
 		ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error)
+		ListSilenceSnapshots(tenantId, faultCenterId string) ([]SilenceSnapshot, error)
+		CompareAndSwapSilenceStatus(SilenceSnapshot, int) (bool, error)
 		WithIdGetMuteFromCache(tenantId, faultCenterId, id string) (*models.AlertSilences, error)
 	}
 )
@@ -52,19 +55,67 @@ func (sc *SilenceCache) RemoveAlertMute(tenantId, faultCenterId, id string) erro
 
 // ListAlertMutes reads a request-local snapshot with one Redis command.
 func (sc *SilenceCache) ListAlertMutes(tenantId, faultCenterId string) ([]models.AlertSilences, error) {
-	mapping, err := sc.getRedisAllHashMap(models.BuildAlertMuteCacheKey(tenantId, faultCenterId))
+	snapshots, err := sc.ListSilenceSnapshots(tenantId, faultCenterId)
 	if err != nil {
 		return nil, err
 	}
-	rules := make([]models.AlertSilences, 0, len(mapping))
-	for _, raw := range mapping {
+	rules := make([]models.AlertSilences, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		rules = append(rules, snapshot.Rule)
+	}
+	return rules, nil
+}
+
+// The original wire value is retained so CAS also works with older JSON field
+// order and whitespace. Never re-encode the expected value for comparison.
+type SilenceSnapshot struct {
+	Rule       models.AlertSilences
+	key        models.AlertMuteCacheKey
+	field, raw string
+}
+
+func (sc *SilenceCache) ListSilenceSnapshots(tenantID, centerID string) ([]SilenceSnapshot, error) {
+	key := models.BuildAlertMuteCacheKey(tenantID, centerID)
+	mapping, err := sc.getRedisAllHashMap(key)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]SilenceSnapshot, 0, len(mapping))
+	for field, raw := range mapping {
 		var rule models.AlertSilences
 		if err := sonic.UnmarshalString(raw, &rule); err != nil {
 			return nil, err
 		}
-		rules = append(rules, rule)
+		if rule.TenantId != tenantID || rule.FaultCenterId != centerID || rule.ID != field {
+			return nil, fmt.Errorf("invalid silence cache identity")
+		}
+		snapshots = append(snapshots, SilenceSnapshot{Rule: rule, key: key, field: field, raw: raw})
 	}
-	return rules, nil
+	return snapshots, nil
+}
+
+var silenceStatusCAS = redis.NewScript(`
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+if ARGV[4] == '2' then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+else
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+end
+return 1
+`)
+
+func (sc *SilenceCache) CompareAndSwapSilenceStatus(before SilenceSnapshot, status int) (bool, error) {
+	if before.key == "" || before.field == "" || before.raw == "" || status < 0 || status > 2 {
+		return false, fmt.Errorf("invalid silence transition")
+	}
+	next := before.Rule
+	next.Status = status
+	raw, err := sonic.MarshalString(next)
+	if err != nil {
+		return false, err
+	}
+	updated, err := silenceStatusCAS.Run(sc.rc, []string{string(before.key)}, before.field, before.raw, raw, status).Int()
+	return updated == 1, err
 }
 
 func (sc *SilenceCache) GetAlertMutes(tenantId, faultCenterId string) ([]string, error) {

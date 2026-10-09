@@ -162,7 +162,7 @@ func (c *Consume) Watch(ctx context.Context, faultCenter models.FaultCenter) {
 		case <-timer.C:
 			// 处理任务信号量
 			taskChan <- struct{}{}
-			c.executeTask(faultCenter, taskChan)
+			c.executeTask(ctx, faultCenter, taskChan)
 		case <-ctx.Done():
 			return
 		}
@@ -170,13 +170,16 @@ func (c *Consume) Watch(ctx context.Context, faultCenter models.FaultCenter) {
 }
 
 // executeTask 执行具体的任务逻辑
-func (c *Consume) executeTask(faultCenter models.FaultCenter, taskChan chan struct{}) {
+func (c *Consume) executeTask(requestCtx context.Context, faultCenter models.FaultCenter, taskChan chan struct{}) {
 	defer func() {
 		// 释放任务信号量
 		<-taskChan
 	}()
 	// 处理静默规则
-	c.processSilenceRule(faultCenter)
+	c.processSilenceRule(requestCtx, faultCenter)
+	if requestCtx.Err() != nil {
+		return
+	}
 	// 获取故障中心的所有告警事件
 	data, err := c.ctx.Redis.Alert().GetAllEvents(models.BuildAlertEventCacheKey(faultCenter.TenantId, faultCenter.ID))
 	if err != nil {
@@ -298,46 +301,42 @@ func (c *Consume) RestartAllConsumers() {
 	}
 }
 
-func (c *Consume) processSilenceRule(faultCenter models.FaultCenter) {
+func (c *Consume) processSilenceRule(requestCtx context.Context, faultCenter models.FaultCenter) {
 	currentTime := time.Now().Unix()
 	silenceCtx := c.ctx.Redis.Silence()
-	// 获取静默列表中所有的id
-	silenceIds, err := silenceCtx.GetAlertMutes(faultCenter.TenantId, faultCenter.ID)
+	// Read once; unchanged lifecycle states require no SQL or Redis writes.
+	snapshots, err := silenceCtx.ListSilenceSnapshots(faultCenter.TenantId, faultCenter.ID)
 	if err != nil {
 		logc.Error(ctx.Ctx, err.Error())
 		return
 	}
 
-	// 根据ID获取到详细的静默规则
-	for _, silenceId := range silenceIds {
-		muteRule, err := silenceCtx.WithIdGetMuteFromCache(faultCenter.TenantId, faultCenter.ID, silenceId)
-		if err != nil {
-			logc.Error(ctx.Ctx, err.Error())
+	for _, snapshot := range snapshots {
+		if requestCtx.Err() != nil {
 			return
 		}
-
-		// 如果当前状态为「未生效」，并且生效时间大于等于当前时间，则标记为「生效中」状态
-		if muteRule.Status == 0 && currentTime >= muteRule.StartsAt {
-			muteRule.Status = 1
-			err := c.ctx.DB.Silence().Update(*muteRule)
-			if err != nil {
-				logc.Error(c.ctx.Ctx, fmt.Sprintf("Update silence rule failed, err: %s", err.Error()))
-				return
-			}
+		before := snapshot.Rule
+		next := before.Status
+		if currentTime >= before.EndsAt {
+			next = 2
+		} else if before.Status == 0 && currentTime >= before.StartsAt {
+			next = 1
 		}
-
-		// 如果到达失效日期，则标记「已失效」状态
-		if muteRule.EndsAt <= currentTime {
-			muteRule.Status = 2
-			err := c.ctx.DB.Silence().Update(*muteRule)
-			if err != nil {
-				logc.Error(c.ctx.Ctx, fmt.Sprintf("Update silence rule failed, err: %s", err.Error()))
-				return
-			}
+		if next == before.Status && next != 2 {
+			continue
 		}
-
-		if err := silenceCtx.PushAlertMute(*muteRule); err != nil {
-			logc.Errorf(c.ctx.Ctx, "Silence cache synchronization failed, id: %s", muteRule.ID)
+		queryCtx, cancel := context.WithTimeout(requestCtx, 10*time.Second)
+		matched, err := c.ctx.DB.Silence().TransitionStatus(queryCtx, before, next)
+		cancel()
+		if err != nil {
+			logc.Errorf(c.ctx.Ctx, "Silence status update failed, id: %s", before.ID)
+			return
+		}
+		if !matched {
+			continue
+		}
+		if _, err := silenceCtx.CompareAndSwapSilenceStatus(snapshot, next); err != nil {
+			logc.Errorf(c.ctx.Ctx, "Silence cache synchronization failed, id: %s", before.ID)
 			return
 		}
 	}

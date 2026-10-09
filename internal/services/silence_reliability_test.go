@@ -167,6 +167,7 @@ type silencePageRepo struct {
 	total    int
 	failPage int64
 	pages    []int64
+	expired  bool
 }
 
 func (s *silencePageRepo) List(tenant, center, query, status string, page models.Page) ([]models.AlertSilences, int64, error) {
@@ -177,9 +178,27 @@ func (s *silencePageRepo) List(tenant, center, query, status string, page models
 	rows := []models.AlertSilences{}
 	start := int((page.Index - 1) * page.Size)
 	for i := start; i < start+int(page.Size) && i < s.total; i++ {
-		rows = append(rows, models.AlertSilences{ID: fmt.Sprintf("s-%d", i)})
+		row := models.AlertSilences{ID: fmt.Sprintf("s-%d", i)}
+		if s.expired && i%2 == 0 {
+			row.Status = 2
+		}
+		rows = append(rows, row)
 	}
 	return rows, int64(s.total), nil
+}
+
+func TestSilenceCacheDoesNotReloadExpiredHistory(t *testing.T) {
+	r := &silencePageRepo{total: 2501, expired: true}
+	c := &silenceWriteCache{}
+	loaded, err := LoadSilenceCache(r, c)
+	if err != nil || loaded != 1250 || len(r.pages) != 3 {
+		t.Fatal(loaded, err, len(r.pages))
+	}
+	for _, row := range c.pushed {
+		if row.Status == 2 {
+			t.Fatal("expired history reloaded into hot cache")
+		}
+	}
 }
 func TestSilenceCacheLoadsBeyondFirstPageAndReportsPartialFailure(t *testing.T) {
 	for _, mode := range []string{"complete", "read_error", "cache_error"} {

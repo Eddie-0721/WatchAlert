@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"context"
+	"fmt"
 	"watchAlert/internal/models"
 
 	"gorm.io/gorm"
@@ -15,6 +17,7 @@ type (
 		List(tenantId, faultCenterId, query string, status string, page models.Page) ([]models.AlertSilences, int64, error)
 		Create(r models.AlertSilences) error
 		Update(r models.AlertSilences) error
+		TransitionStatus(context.Context, models.AlertSilences, int) (bool, error)
 		Delete(tenantId, id string) error
 	}
 )
@@ -26,6 +29,31 @@ func newSilenceInterface(db *gorm.DB, g InterGormDBCli) InterSilenceRepo {
 			db: db,
 		},
 	}
+}
+
+// Automatic lifecycle synchronization updates only status, never a stale copy
+// of labels/comment/times. Matching the original schedule protects edits/moves.
+func (sr SilenceRepo) TransitionStatus(ctx context.Context, before models.AlertSilences, status int) (bool, error) {
+	if before.TenantId == "" || before.ID == "" || status < 0 || status > 2 {
+		return false, fmt.Errorf("invalid silence transition")
+	}
+	base := func() *gorm.DB {
+		return sr.db.WithContext(ctx).Model(&models.AlertSilences{}).
+			Where("tenant_id = ? AND id = ? AND fault_center_id = ? AND starts_at = ? AND ends_at = ? AND update_at = ?", before.TenantId, before.ID, before.FaultCenterId, before.StartsAt, before.EndsAt, before.UpdateAt)
+	}
+	updated := base().Where("status = ?", before.Status).UpdateColumn("status", status)
+	if updated.Error != nil {
+		return false, updated.Error
+	}
+	if updated.RowsAffected > 0 {
+		return true, nil
+	}
+	// A prior SQL success followed by a failed cache write must be retryable.
+	var count int64
+	if err := base().Where("status = ?", status).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (sr SilenceRepo) List(tenantId, faultCenterId, query string, status string, page models.Page) ([]models.AlertSilences, int64, error) {

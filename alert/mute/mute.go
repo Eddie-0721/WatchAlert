@@ -37,21 +37,15 @@ func RecoverNotify(mp MuteParams) bool {
 func IsSilence(mute MuteParams) bool {
 	silenceCtx := ctx.Redis.Silence()
 	// 获取静默列表中所有的id
-	ids, err := silenceCtx.GetAlertMutes(mute.TenantId, mute.FaultCenterId)
+	rules, err := silenceCtx.ListAlertMutes(mute.TenantId, mute.FaultCenterId)
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "%s", err.Error())
 		return false
 	}
 
-	// 根据ID获取到详细的静默规则
-	for _, id := range ids {
-		muteRule, err := silenceCtx.WithIdGetMuteFromCache(mute.TenantId, mute.FaultCenterId, id)
-		if err != nil {
-			logc.Errorf(ctx.Ctx, "%s", err.Error())
-			return false
-		}
-
-		if muteRule == nil || muteRule.Status != 1 || time.Now().Unix() < muteRule.StartsAt || time.Now().Unix() >= muteRule.EndsAt {
+	// Snapshot lives for this decision only, not across sends or consumer ticks.
+	for _, muteRule := range rules {
+		if muteRule.Status != 1 || time.Now().Unix() < muteRule.StartsAt || time.Now().Unix() >= muteRule.EndsAt {
 			continue
 		}
 

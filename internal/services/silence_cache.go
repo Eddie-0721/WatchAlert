@@ -18,6 +18,12 @@ func LoadSilenceCache(repository repo.InterSilenceRepo, target cache.SilenceCach
 			return loaded, fmt.Errorf("读取静默分页失败: %w", err)
 		}
 		for _, row := range rows {
+			// Historical expired rules remain in SQL, not the hot matching cache.
+			// Expired schedules still marked active must be loaded so the consumer
+			// can persist their lifecycle transition before evicting them.
+			if row.Status == 2 {
+				continue
+			}
 			if err := target.PushAlertMute(row); err != nil {
 				return loaded, fmt.Errorf("静默 %s 缓存同步失败", row.ID)
 			}
