@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -33,6 +34,17 @@ func (c *claimCache) PushAlertEvent(e *models.AlertCurEvent) error {
 	}
 	c.events[e.Fingerprint] = *e
 	return nil
+}
+
+func (c *claimCache) ConfirmAlertEvent(_ context.Context, e models.AlertCurEvent, username string, at int64) (bool, error) {
+	if e.ConfirmState.IsOk {
+		return true, nil
+	}
+	e.ConfirmState.IsOk = true
+	e.ConfirmState.ConfirmUsername = username
+	e.ConfirmState.ConfirmActionTime = at
+	err := c.PushAlertEvent(&e)
+	return err == nil, err
 }
 
 type claimEntry struct {

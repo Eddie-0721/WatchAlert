@@ -43,7 +43,7 @@ func alarmUpgrade(requestCtx context.Context, ctx *ctx.Context, faultCenter mode
 		}
 		// 确认阶段
 		if !event.ConfirmState.IsOk {
-			if err := processStage(ctx, faultCenter, event, currentTime, confirmAggregated, models.ConfirmStatus); err != nil {
+			if err := processStage(requestCtx, ctx, faultCenter, event, currentTime, confirmAggregated, models.ConfirmStatus); err != nil {
 				logc.Error(ctx.Ctx, fmt.Errorf("process confirm stage failed: %w", err))
 			}
 		}
@@ -109,7 +109,7 @@ func createAggregatedAlert(status int64, faultCenter models.FaultCenter) *Aggreg
 }
 
 // processStage 统一处理确认和处理阶段的逻辑
-func processStage(ctx *ctx.Context, faultCenter models.FaultCenter, alert *models.AlertCurEvent, currentTime int64, aggregated *AggregatedAlert, status int64) error {
+func processStage(requestCtx context.Context, ctx *ctx.Context, faultCenter models.FaultCenter, alert *models.AlertCurEvent, currentTime int64, aggregated *AggregatedAlert, status int64) error {
 	// 检查是否超时 (达到升级条件)
 	statusStrategy := faultCenter.UpgradeStrategy
 	startTime := getStartTime(alert)
@@ -138,10 +138,17 @@ func processStage(ctx *ctx.Context, faultCenter models.FaultCenter, alert *model
 		}
 	}
 
+	// 更新通知时间，并推送到 Redis
+	ok, err := ctx.Redis.Alert().UpdateNotificationTime(requestCtx, *alert, currentTime, true)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	alert.ConfirmState.ConfirmTimeoutSendTime = max(alert.ConfirmState.ConfirmTimeoutSendTime, currentTime)
 	aggregated.Fingerprints = append(aggregated.Fingerprints, alert.Fingerprint)
 	aggregated.Events = append(aggregated.Events, alert)
-	// 更新通知时间，并推送到 Redis
-	setLastNoticeTime(ctx, alert, currentTime)
 
 	return nil
 }
@@ -154,12 +161,6 @@ func getStartTime(alert *models.AlertCurEvent) int64 {
 // getLastNoticeTime 根据状态获取上次通知时间
 func getLastNoticeTime(alert *models.AlertCurEvent) int64 {
 	return alert.ConfirmState.ConfirmTimeoutSendTime
-}
-
-// setLastNoticeTime 根据状态设置上次通知时间
-func setLastNoticeTime(ctx *ctx.Context, alert *models.AlertCurEvent, currentTime int64) {
-	alert.ConfirmState.ConfirmTimeoutSendTime = currentTime
-	ctx.Redis.Alert().PushAlertEvent(alert)
 }
 
 // sendIfNotEmpty 检查聚合告警是否不为空，如果不为空则发送

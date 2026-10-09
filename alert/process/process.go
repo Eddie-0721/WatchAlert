@@ -99,7 +99,9 @@ func PushEventToFaultCenterContext(requestCtx context.Context, ctx *ctx.Context,
 	if requestCtx.Err() != nil {
 		return
 	}
-	cache.Alert().PushAlertEvent(event)
+	if err := cache.Alert().PushAlertEvent(event); err != nil {
+		logc.Errorf(ctx.Ctx, "Publish evaluated alert failed, rule=%s, fingerprint=%s: %v", event.RuleId, event.Fingerprint, err)
+	}
 }
 
 // NotInTheEffectiveTime 判断是否不在生效时间内

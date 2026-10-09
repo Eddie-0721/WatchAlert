@@ -30,7 +30,7 @@ func IsMuted(mute MuteParams) bool {
 
 // RecoverNotify 判断是否推送恢复通知
 func RecoverNotify(mp MuteParams) bool {
-	return mp.IsRecovered && !*mp.RecoverNotify
+	return mp.IsRecovered && (mp.RecoverNotify == nil || !*mp.RecoverNotify)
 }
 
 // IsSilence 判断是否静默

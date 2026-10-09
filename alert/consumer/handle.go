@@ -24,7 +24,6 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 	if err := requestCtx.Err(); err != nil {
 		return err
 	}
-	curTime := time.Now().Unix()
 	g := new(errgroup.Group)
 
 	// 获取通知对象详细信息
@@ -37,18 +36,16 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 	// 按告警等级分组
 	severityGroups := make(map[string][]*models.AlertCurEvent)
 	for _, alert := range alerts {
+		if err := requestCtx.Err(); err != nil {
+			return err
+		}
+		if alert == nil || alert.Fingerprint == "" {
+			continue
+		}
 		severityGroups[alert.Severity] = append(severityGroups[alert.Severity], alert)
 	}
 
-	// 告警聚合
-	var aggregationEvents map[string][]*models.AlertCurEvent
-	if processType == "alarm" {
-		aggregationEvents = alarmAggregation(ctx, processType, faultCenter, severityGroups)
-	} else {
-		aggregationEvents = severityGroups
-	}
-
-	for severity, events := range aggregationEvents {
+	for severity, events := range severityGroups {
 		g.Go(func() error {
 			// Retain one failure, not one allocated error per event in a flood.
 			var firstSendError error
@@ -58,18 +55,37 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 
 			// 获取当前事件等级对应的路由配置
 			routes := getNoticeRoutes(noticeData, severity)
-			for _, event := range events {
+			groupSize := 1
+			if processType == "alarm" && faultCenter.GetAlarmAggregationType() == "Rule" {
+				groupSize = len(events)
+			}
+			for start := 0; start < len(events); start += groupSize {
+				members := events[start:min(start+groupSize, len(events))]
+				curTime := time.Now().Unix()
 				if err := requestCtx.Err(); err != nil {
 					return errors.Join(firstSendError, err)
 				}
-				if event.Fingerprint == "" {
+				ready := make([]*models.AlertCurEvent, 0, len(members))
+				for _, member := range members {
+					if processType == "alarm" && !member.IsRecovered {
+						ok, err := ctx.Redis.Alert().UpdateNotificationTime(requestCtx, *member, curTime, false)
+						if err != nil {
+							if firstSendError == nil {
+								firstSendError = fmt.Errorf("update notification clock: %w", err)
+							}
+							continue
+						}
+						if !ok {
+							continue
+						}
+						member.LastSendTime = max(member.LastSendTime, curTime)
+					}
+					ready = append(ready, member)
+				}
+				if len(ready) == 0 {
 					continue
 				}
-
-				if processType == "alarm" && !event.IsRecovered {
-					event.LastSendTime = curTime
-					ctx.Redis.Alert().PushAlertEvent(event)
-				}
+				event := withRuleGroupByAlerts(ready)[0]
 
 				if len(routes) == 0 {
 					logc.Infof(ctx.Ctx, "没有匹配的通知策略, 告警事件名称: %s, 通知对象名称: %s", event.RuleName, noticeData.Name)
@@ -157,39 +173,10 @@ func handleAlert(requestCtx context.Context, ctx *ctx.Context, processType strin
 	return g.Wait()
 }
 
-// alarmAggregation 告警聚合
-func alarmAggregation(ctx *ctx.Context, processType string, faultCenter models.FaultCenter, alertGroups map[string][]*models.AlertCurEvent) map[string][]*models.AlertCurEvent {
-	// 仅当 processType 为 "alarm" 时执行聚合
-	if processType != "alarm" {
-		return alertGroups
-	}
-
-	curTime := time.Now().Unix()
-	newAlertGroups := alertGroups
-	switch faultCenter.GetAlarmAggregationType() {
-	case "Rule":
-		for severity, events := range alertGroups {
-			newAlertGroups[severity] = withRuleGroupByAlerts(ctx, curTime, events)
-		}
-	default:
-		return alertGroups
-	}
-
-	return newAlertGroups
-}
-
 // withRuleGroupByAlerts 聚合告警
-func withRuleGroupByAlerts(ctx *ctx.Context, timeInt int64, alerts []*models.AlertCurEvent) []*models.AlertCurEvent {
+func withRuleGroupByAlerts(alerts []*models.AlertCurEvent) []*models.AlertCurEvent {
 	if len(alerts) <= 1 {
 		return alerts
-	}
-
-	for i := range alerts {
-		alert := alerts[i]
-		if !alert.IsRecovered {
-			alert.LastSendTime = timeInt
-			ctx.Redis.Alert().PushAlertEvent(alert)
-		}
 	}
 
 	event := *alerts[0]

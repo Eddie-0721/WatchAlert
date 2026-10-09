@@ -40,6 +40,10 @@ func (e eventService) ProcessAlertEvent(req interface{}) (interface{}, interface
 		return nil, fmt.Errorf("认领参数不完整或单次超过 500 条，请刷新后重试")
 	}
 	confirmed, failed := 0, 0
+	requestCtx := e.ctx.Ctx
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
 	seen := make(map[string]bool)
 	for _, fingerprint := range r.Fingerprints {
 		if seen[fingerprint] {
@@ -51,14 +55,10 @@ func (e eventService) ProcessAlertEvent(req interface{}) (interface{}, interface
 			failed++
 			continue
 		}
-		if !event.ConfirmState.IsOk {
-			event.ConfirmState.IsOk = true
-			event.ConfirmState.ConfirmUsername = r.Username
-			event.ConfirmState.ConfirmActionTime = time.Now().Unix()
-			if err := e.ctx.Redis.Alert().PushAlertEvent(&event); err != nil {
-				failed++
-				continue
-			}
+		claimed, err := e.ctx.Redis.Alert().ConfirmAlertEvent(requestCtx, event, r.Username, time.Now().Unix())
+		if err != nil || !claimed {
+			failed++
+			continue
 		}
 		confirmed++
 	}
