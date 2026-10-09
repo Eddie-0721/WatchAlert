@@ -4,148 +4,91 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"watchAlert/internal/types"
-
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/dyvmsapi"
-	"github.com/zeromicro/go-zero/core/logc"
+	"net/http"
+	"time"
+	"watchAlert/internal/types"
+	"watchAlert/pkg/medium/delivery"
 )
 
-// AliyunPhoneNotifier 阿里云电话通知器
 type AliyunPhoneNotifier struct {
 	AccessKeyId      string
 	AccessKeySecret  string
 	CalledShowNumber string
 	TtsCode          string
 	Region           string
+	transport        http.RoundTripper
 }
 
-// NewAliyunPhoneNotifier 创建阿里云电话通知器
-func NewAliyunPhoneNotifier(accessKeyId, accessKeySecret, calledShowNumber, ttsCode string) *AliyunPhoneNotifier {
-	return &AliyunPhoneNotifier{
-		AccessKeyId:      accessKeyId,
-		AccessKeySecret:  accessKeySecret,
-		CalledShowNumber: calledShowNumber,
-		TtsCode:          ttsCode,
-		Region:           "cn-hangzhou",
-	}
+func NewAliyunPhoneNotifier(id, secret, caller, tts string) *AliyunPhoneNotifier {
+	return &AliyunPhoneNotifier{AccessKeyId: id, AccessKeySecret: secret, CalledShowNumber: caller, TtsCode: tts, Region: "cn-hangzhou"}
+}
+func (a *AliyunPhoneNotifier) GetType() types.NotificationType         { return types.Phone }
+func (a *AliyunPhoneNotifier) GetProvider() types.NotificationProvider { return types.AliyunPhone }
+
+func (a *AliyunPhoneNotifier) newClient() (*dyvmsapi.Client, error) {
+	config := sdk.NewConfig().WithAutoRetry(false).WithMaxRetryTime(0).WithTimeout(10 * time.Second)
+	return dyvmsapi.NewClientWithOptions(a.Region, config, credentials.NewAccessKeyCredential(a.AccessKeyId, a.AccessKeySecret))
 }
 
-// GetType 获取通知器类型
-func (a *AliyunPhoneNotifier) GetType() types.NotificationType {
-	return types.Phone
-}
-
-// GetProvider 获取通知器提供商
-func (a *AliyunPhoneNotifier) GetProvider() types.NotificationProvider {
-	return types.AliyunPhone
-}
-
-// Notify 发送阿里云电话通知
 func (a *AliyunPhoneNotifier) Notify(ctx context.Context, message *types.Message) (*types.NotificationResult, error) {
-	logc.Infof(ctx, "开始发送阿里云电话通知, Users: %v, Labels: %v", message.ToUsers, message.Labels)
-
-	// 验证配置
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := a.validate(); err != nil {
-		logc.Errorf(ctx, "阿里云电话配置验证失败: %v", err)
-		return &types.NotificationResult{
-			Success: false,
-			Message: fmt.Sprintf("配置验证失败: %v", err),
-		}, err
+		return nil, err
 	}
-
-	// 检查必要参数
-	if len(message.ToUsers) == 0 {
-		logc.Errorf(ctx, "电话号码不能为空")
-		return &types.NotificationResult{
-			Success: false,
-			Message: "电话号码不能为空",
-		}, fmt.Errorf("电话号码不能为空")
-	}
-
-	// 提取消息内容
-	content, err := json.Marshal(message.Labels)
+	client, err := a.newClient()
 	if err != nil {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "Labels JSON 转换失败: " + err.Error(),
-		}, nil
+		return nil, delivery.RequestError(ctx, err)
 	}
-
-	// 批量发送电话通知
-	var results []string
-	var hasError bool
-
-	for _, to := range message.ToUsers {
-		if to.Phone == "" {
-			continue
-		}
-
-		result := a.Call(ctx, string(content), to.Phone)
-		results = append(results, fmt.Sprintf("用户: %s, %s", to.Phone, result))
-
-		// 简单判断是否有错误（根据实际返回结果优化）
-		if result != "OK" && result != "成功" {
-			hasError = true
-		}
-	}
-
-	success := !hasError && len(results) > 0
-	resultMessage := fmt.Sprintf("发送结果: %v", results)
-
-	if success {
-		logc.Infof(ctx, "阿里云电话通知发送成功")
-	}
-
-	return &types.NotificationResult{
-		Success: success,
-		Message: resultMessage,
-		Data:    results,
-	}, nil
+	return delivery.SendBatch(ctx, message, func(requestCtx context.Context, content, number string) error {
+		client.SetTransport(delivery.SDKTransport{Parent: requestCtx, Base: a.transport})
+		return a.call(client, requestCtx, content, number)
+	})
 }
 
-// Call 拨打电话
-func (a *AliyunPhoneNotifier) Call(ctx context.Context, content, phoneNumber string) string {
-	logc.Infof(ctx, "开始拨打电话到 %s，内容: %s", phoneNumber, content)
-
-	// 创建阿里云电话客户端
-	client, err := dyvmsapi.NewClientWithAccessKey(a.Region, a.AccessKeyId, a.AccessKeySecret)
-	if err != nil {
-		errMsg := fmt.Sprintf("创建阿里云电话客户端失败: %s", err.Error())
-		logc.Error(ctx, errMsg)
-		return errMsg
+func (a *AliyunPhoneNotifier) call(client *dyvmsapi.Client, ctx context.Context, content, number string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	// 创建拨打电话请求
 	request := dyvmsapi.CreateSingleCallByTtsRequest()
 	request.Scheme = "https"
 	request.CalledShowNumber = a.CalledShowNumber
-	request.CalledNumber = phoneNumber
+	request.CalledNumber = number
 	request.TtsCode = a.TtsCode
-
-	// 构建TTS参数
-	ttsParam := map[string]string{
-		"content": content,
-	}
-	ttsParamJson, err := json.Marshal(ttsParam)
+	payload, err := json.Marshal(map[string]string{"content": content})
 	if err != nil {
-		errMsg := fmt.Sprintf("构建TTS参数失败: %s", err.Error())
-		logc.Error(ctx, errMsg)
-		return errMsg
+		return err
 	}
-	request.TtsParam = string(ttsParamJson)
-
-	// 拨打电话
+	request.TtsParam = string(payload)
 	response, err := client.SingleCallByTts(request)
 	if err != nil {
-		errMsg := fmt.Sprintf("拨打阿里云电话失败: %s", err.Error())
-		return errMsg
+		return delivery.RequestError(ctx, err)
 	}
-
-	logc.Infof(ctx, "电话拨打完成，响应: %s", response.Message)
-	return response.Message
+	return delivery.CheckAliyunCode(response.Code)
 }
 
-// validate 验证配置参数
+// Call keeps its historical signature; internal delivery uses typed errors.
+func (a *AliyunPhoneNotifier) Call(parent context.Context, content, number string) string {
+	ctx, cancel := context.WithTimeout(parent, delivery.RequestTimeout)
+	defer cancel()
+	if err := a.validate(); err != nil {
+		return err.Error()
+	}
+	client, err := a.newClient()
+	if err != nil {
+		return delivery.RequestError(ctx, err).Error()
+	}
+	client.SetTransport(delivery.SDKTransport{Parent: ctx, Base: a.transport})
+	if err := a.call(client, ctx, content, number); err != nil {
+		return err.Error()
+	}
+	return "OK"
+}
+
 func (a *AliyunPhoneNotifier) validate() error {
 	if a.AccessKeyId == "" {
 		return fmt.Errorf("AccessKeyId 不能为空")

@@ -6,15 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strconv"
-	"strings"
 	"time"
 
+	"net/http"
 	"watchAlert/internal/types"
+	"watchAlert/pkg/medium/delivery"
 	"watchAlert/pkg/tools"
-
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
 // TencentPhoneNotifier 腾讯云电话通知器
@@ -22,6 +20,7 @@ type TencentPhoneNotifier struct {
 	SecretID  string
 	SecretKey string
 	AppID     string
+	postHTTP  func(context.Context, string, *bytes.Reader) (*http.Response, error)
 }
 
 // NewTencentPhoneNotifier 创建腾讯云电话通知器
@@ -45,70 +44,34 @@ func (t *TencentPhoneNotifier) GetProvider() types.NotificationProvider {
 
 // Notify 发送腾讯云电话通知
 func (t *TencentPhoneNotifier) Notify(ctx context.Context, message *types.Message) (*types.NotificationResult, error) {
-	logc.Infof(ctx, "开始发送腾讯云电话通知, Users: %v, Labels: %v", message.ToUsers, message.Labels)
-
-	// 验证配置
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := t.validate(); err != nil {
-		logc.Errorf(ctx, "腾讯云电话配置验证失败: %v", err)
-		return &types.NotificationResult{
-			Success: false,
-			Message: fmt.Sprintf("配置验证失败: %v", err),
-		}, err
+		return nil, err
 	}
-
-	// 检查必要参数
-	if len(message.ToUsers) == 0 {
-		logc.Errorf(ctx, "电话号码不能为空")
-		return &types.NotificationResult{
-			Success: false,
-			Message: "电话号码不能为空",
-		}, fmt.Errorf("电话号码不能为空")
-	}
-
-	// 提取消息内容
-	content, err := json.Marshal(message.Labels)
-	if err != nil {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "Labels JSON 转换失败: " + err.Error(),
-		}, nil
-	}
-
-	// 批量发送电话通知
-	var results []string
-	var hasError bool
-
-	for _, to := range message.ToUsers {
-		if to.Phone == "" {
-			continue
-		}
-
-		result := t.Call(ctx, string(content), to.Phone)
-		results = append(results, fmt.Sprintf("用户: %s, %s", to.Phone, result))
-
-		// 简单判断是否有错误（根据实际返回结果优化）
-		if !strings.Contains(result, "success") && !strings.Contains(result, "成功") && !strings.Contains(result, "OK") {
-			hasError = true
-		}
-	}
-
-	success := !hasError && len(results) > 0
-	resultMessage := fmt.Sprintf("发送结果: %v", results)
-
-	if success {
-		logc.Infof(ctx, "腾讯云电话通知发送成功")
-	}
-
-	return &types.NotificationResult{
-		Success: success,
-		Message: resultMessage,
-		Data:    results,
-	}, nil
+	return delivery.SendBatch(ctx, message, func(requestCtx context.Context, content, number string) error {
+		return t.call(requestCtx, content, number)
+	})
 }
 
 // Call 拨打腾讯云电话的内部方法
-func (t *TencentPhoneNotifier) Call(ctx context.Context, content, phoneNumber string) string {
-	logc.Infof(ctx, "开始拨打电话到 %s，内容: %s", phoneNumber, content)
+func (t *TencentPhoneNotifier) Call(parent context.Context, content, phoneNumber string) string {
+	ctx, cancel := context.WithTimeout(parent, delivery.RequestTimeout)
+	defer cancel()
+	if err := t.call(ctx, content, phoneNumber); err != nil {
+		return err.Error()
+	}
+	return "success"
+}
+
+func (t *TencentPhoneNotifier) call(ctx context.Context, content, phoneNumber string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.validate(); err != nil {
+		return err
+	}
 
 	// 腾讯云语音通知API接口地址
 	url := "https://cloud.tim.qq.com/v5/tlsvoicesvr/sendtvoice?sdkappid=" + t.AppID + "&random=7226249334"
@@ -135,37 +98,25 @@ func (t *TencentPhoneNotifier) Call(ctx context.Context, content, phoneNumber st
 	reqData["sig"] = sig
 	reqData["time"] = timeInt
 
-	// 将请求数据转换为JSON
 	jsonData, err := json.Marshal(reqData)
 	if err != nil {
-		errMsg := fmt.Sprintf("构建腾讯云电话请求数据失败: %s", err.Error())
-		logc.Error(ctx, errMsg)
-		return errMsg
+		return err
 	}
-
-	// 设置请求头
-	headers := map[string]string{
-		"Content-Type": "application/json",
+	post := t.postHTTP
+	if post == nil {
+		post = func(ctx context.Context, url string, body *bytes.Reader) (*http.Response, error) {
+			return tools.PostContext(ctx, nil, url, body, 10)
+		}
 	}
-
-	// 发送POST请求
-	response, err := tools.Post(headers, url, bytes.NewReader(jsonData), 10)
+	response, err := post(ctx, url, bytes.NewReader(jsonData))
 	if err != nil {
-		errMsg := fmt.Sprintf("拨打腾讯云电话请求失败: %s", err.Error())
-		logc.Error(ctx, errMsg)
-		return errMsg
+		return delivery.RequestError(ctx, err)
 	}
-
-	defer response.Body.Close()
-	respStr, _ := io.ReadAll(response.Body)
-	logc.Infof(ctx, "腾讯云电话响应: %s", string(respStr))
-
-	// 检查响应是否包含成功标识
-	if strings.Contains(string(respStr), "\"result\":0") || strings.Contains(string(respStr), "success") { // 根据腾讯云API响应格式判断
-		return "success: " + string(respStr)
-	} else {
-		return "error: " + string(respStr)
+	body, err := delivery.ReadResponse(response)
+	if err != nil {
+		return err
 	}
+	return delivery.CheckTencent(body, nil)
 }
 
 // getSha256Code 计算SHA256摘要

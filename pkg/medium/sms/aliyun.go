@@ -2,131 +2,88 @@ package sms
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-
+	"net/http"
+	"time"
 	"watchAlert/internal/types"
+	"watchAlert/pkg/medium/delivery"
 
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/dysmsapi"
-	"github.com/sirupsen/logrus"
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
-// AliyunSMSNotifier 阿里云短信通知器
 type AliyunSMSNotifier struct {
 	AccessKeyId     string
 	AccessKeySecret string
 	SignName        string
 	TemplateCode    string
+	transport       http.RoundTripper
 }
 
-// NewAliyunSMSNotifier 创建阿里云短信通知器
-func NewAliyunSMSNotifier(accessKeyId, accessKeySecret, signName, templateCode string) *AliyunSMSNotifier {
-	return &AliyunSMSNotifier{
-		AccessKeyId:     accessKeyId,
-		AccessKeySecret: accessKeySecret,
-		SignName:        signName,
-		TemplateCode:    templateCode,
-	}
+func NewAliyunSMSNotifier(id, secret, sign, template string) *AliyunSMSNotifier {
+	return &AliyunSMSNotifier{AccessKeyId: id, AccessKeySecret: secret, SignName: sign, TemplateCode: template}
+}
+func (a *AliyunSMSNotifier) GetType() types.NotificationType         { return types.SMS }
+func (a *AliyunSMSNotifier) GetProvider() types.NotificationProvider { return types.AliyunSms }
+
+func (a *AliyunSMSNotifier) newClient() (*dysmsapi.Client, error) {
+	config := sdk.NewConfig().WithAutoRetry(false).WithMaxRetryTime(0).WithTimeout(10 * time.Second)
+	return dysmsapi.NewClientWithOptions("cn-hangzhou", config, credentials.NewAccessKeyCredential(a.AccessKeyId, a.AccessKeySecret))
 }
 
-// GetType 获取通知器类型
-func (a *AliyunSMSNotifier) GetType() types.NotificationType {
-	return types.SMS
-}
-
-// GetProvider 获取通知器提供商
-func (a *AliyunSMSNotifier) GetProvider() types.NotificationProvider {
-	return types.AliyunSms
-}
-
-// Notify 发送阿里云短信通知
 func (a *AliyunSMSNotifier) Notify(ctx context.Context, message *types.Message) (*types.NotificationResult, error) {
-	// 验证配置
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := a.validate(); err != nil {
-		logc.Errorf(ctx, "阿里云短信配置验证失败: %v", err)
-		return &types.NotificationResult{
-			Success: false,
-			Message: fmt.Sprintf("配置验证失败: %v", err),
-		}, err
+		return nil, err
 	}
-
-	// 检查必要参数
-	if len(message.ToUsers) == 0 {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "电话号码不能为空",
-		}, nil
-	}
-
-	content, err := json.Marshal(message.Labels)
+	client, err := a.newClient()
 	if err != nil {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "Labels JSON 转换失败: " + err.Error(),
-		}, nil
+		return nil, delivery.RequestError(ctx, err)
 	}
-
-	var results []string
-	var hasError bool
-
-	// 调用阿里云短信发送函数
-	for _, to := range message.ToUsers {
-		if to.Phone == "" {
-			continue
-		}
-
-		result, err := a.Post(string(content), to.Phone, "sms")
-		if err != nil {
-			hasError = true
-		}
-		results = append(results, fmt.Sprintf("用户: %s, %s", to.Phone, result))
-	}
-
-	success := !hasError && len(results) > 0
-	resultMessage := fmt.Sprintf("发送结果: %v", results)
-
-	if success {
-		logc.Info(ctx, "阿里云短信通知发送成功")
-	}
-
-	return &types.NotificationResult{
-		Success: success,
-		Message: resultMessage,
-		Data:    results,
-	}, nil
+	return delivery.SendBatch(ctx, message, func(requestCtx context.Context, content, number string) error {
+		client.SetTransport(delivery.SDKTransport{Parent: requestCtx, Base: a.transport})
+		return a.send(client, requestCtx, content, number)
+	})
 }
 
-// Post 发送阿里云短信
-func (a *AliyunSMSNotifier) Post(Messages, PhoneNumbers, logsign string) (string, error) {
-	// 创建阿里云短信客户端
-	client, err := dysmsapi.NewClientWithAccessKey("cn-hangzhou", a.AccessKeyId, a.AccessKeySecret)
-	if err != nil {
-		logrus.Error("创建阿里云短信客户端失败, ", err.Error())
-		return "", fmt.Errorf("创建阿里云短信客户端失败: %s", err.Error())
+func (a *AliyunSMSNotifier) send(client *dysmsapi.Client, ctx context.Context, content, number string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	// 创建发送短信请求
 	request := dysmsapi.CreateSendSmsRequest()
 	request.Scheme = "https"
-	request.PhoneNumbers = PhoneNumbers
+	request.PhoneNumbers = number
 	request.SignName = a.SignName
 	request.TemplateCode = a.TemplateCode
-	request.TemplateParam = Messages
-
-	// 发送短信
+	request.TemplateParam = content
 	response, err := client.SendSms(request)
 	if err != nil {
-		logrus.Error("阿里云短信发送失败, ", err.Error())
-		return "", fmt.Errorf("阿里云短信发送失败: %s", err.Error())
+		return delivery.RequestError(ctx, err)
 	}
-
-	logrus.Info("阿里云短信发送成功, ", response)
-
-	return response.Message, nil
+	return delivery.CheckAliyunCode(response.Code)
 }
 
-// validate 验证配置参数
+// Post is retained for existing direct callers. Consumer paths use Notify.
+func (a *AliyunSMSNotifier) Post(content, number, logsign string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), delivery.RequestTimeout)
+	defer cancel()
+	if err := a.validate(); err != nil {
+		return "", err
+	}
+	client, err := a.newClient()
+	if err != nil {
+		return "", delivery.RequestError(ctx, err)
+	}
+	client.SetTransport(delivery.SDKTransport{Parent: ctx, Base: a.transport})
+	if err := a.send(client, ctx, content, number); err != nil {
+		return "", err
+	}
+	return "OK", nil
+}
+
 func (a *AliyunSMSNotifier) validate() error {
 	if a.AccessKeyId == "" {
 		return fmt.Errorf("AccessKeyId 不能为空")

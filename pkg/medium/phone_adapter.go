@@ -1,13 +1,9 @@
 package medium
 
 import (
-	"context"
-	"fmt"
 	"watchAlert/internal/models"
 	"watchAlert/internal/types"
 	"watchAlert/pkg/medium/phone"
-
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
 // PhoneAdapter 电话通知适配器
@@ -47,17 +43,8 @@ func (p *PhoneAdapter) Send(params SendParams) error {
 	}
 
 	// 发送通知
-	result, err := p.notifier.Notify(context.Background(), message)
-	if err != nil {
-		return fmt.Errorf("电话通知发送失败: %v", err)
-	}
-
-	if !result.Success {
-		return fmt.Errorf("电话通知发送失败: %s", result.Message)
-	}
-
-	logc.Info(context.Background(), fmt.Sprintf("电话通知发送成功: %s", result.Message))
-	return nil
+	result, err := p.notifier.Notify(params.Context(), message)
+	return notificationResultError("电话通知", result, err)
 }
 
 // Test 实现SendInter接口
@@ -79,14 +66,6 @@ func (p *PhoneAdapter) Test(params SendParams) error {
 		}
 	}
 
-	result, err := p.notifier.Notify(context.Background(), message)
-	if err != nil {
-		return fmt.Errorf("电话通知测试失败: %v", err)
-	}
-
-	if !result.Success {
-		return fmt.Errorf("电话通知测试失败: %s", result.Message)
-	}
-
-	return nil
+	result, err := p.notifier.Notify(params.Context(), message)
+	return notificationResultError("电话通知测试", result, err)
 }

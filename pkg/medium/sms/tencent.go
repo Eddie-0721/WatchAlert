@@ -6,16 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"net/http"
 	"watchAlert/internal/types"
+	"watchAlert/pkg/medium/delivery"
 	"watchAlert/pkg/tools"
-
-	"github.com/sirupsen/logrus"
-	"github.com/zeromicro/go-zero/core/logc"
 )
 
 // TencentSMSNotifier 腾讯云短信通知器
@@ -24,6 +22,7 @@ type TencentSMSNotifier struct {
 	SdkAppId   string
 	TemplateId int
 	Sign       string
+	postHTTP   func(context.Context, string, *bytes.Reader) (*http.Response, error)
 }
 
 // Mobiles 手机号码结构
@@ -66,65 +65,31 @@ func (t *TencentSMSNotifier) GetProvider() types.NotificationProvider {
 
 // Notify 发送腾讯云短信通知
 func (t *TencentSMSNotifier) Notify(ctx context.Context, message *types.Message) (*types.NotificationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := t.validate(); err != nil {
-		logrus.Errorf("腾讯云短信配置验证失败: %v", err)
-		return &types.NotificationResult{
-			Success: false,
-			Message: fmt.Sprintf("配置验证失败: %v", err),
-		}, err
+		return nil, err
 	}
-
-	// 检查必要参数
-	if len(message.ToUsers) == 0 {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "手机号码不能为空",
-		}, nil
-	}
-
-	content, err := json.Marshal(message.Labels)
-	if err != nil {
-		return &types.NotificationResult{
-			Success: false,
-			Message: "Labels JSON 转换失败: " + err.Error(),
-		}, nil
-	}
-
-	var results []string
-	var hasError bool
-
-	// 调用腾讯云短信发送函数
-	for _, to := range message.ToUsers {
-		if to.Phone == "" {
-			continue
-		}
-
-		result, err := t.Post(string(content), to.Phone, "sms")
-		if err != nil {
-			hasError = true
-		}
-		results = append(results, fmt.Sprintf("用户: %s, %s", to.Phone, result))
-	}
-
-	success := !hasError && len(results) > 0
-	resultMessage := fmt.Sprintf("发送结果: %v", results)
-
-	if success {
-		logc.Info(ctx, "腾讯云短信通知发送成功")
-	}
-
-	return &types.NotificationResult{
-		Success: success,
-		Message: resultMessage,
-		Data:    results,
-	}, nil
+	return delivery.SendBatch(ctx, message, func(requestCtx context.Context, content, number string) error {
+		_, err := t.postContext(requestCtx, content, number, "sms")
+		return err
+	})
 }
 
 // Post 发送腾讯云短信
 func (t *TencentSMSNotifier) Post(Messages, PhoneNumbers, logsign string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), delivery.RequestTimeout)
+	defer cancel()
+	return t.postContext(ctx, Messages, PhoneNumbers, logsign)
+}
+
+func (t *TencentSMSNotifier) postContext(ctx context.Context, Messages, PhoneNumbers, logsign string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// 检查配置是否完整
 	if t.AppKey == "" || t.SdkAppId == "" || t.TemplateId == 0 || t.Sign == "" {
-		logrus.Info("腾讯云短信接口配置不完整")
 		return "", fmt.Errorf("腾讯云短信接口配置不完整")
 	}
 
@@ -154,24 +119,28 @@ func (t *TencentSMSNotifier) Post(Messages, PhoneNumbers, logsign string) (strin
 		Tpl_id: t.TemplateId,
 	}
 
-	b := new(bytes.Buffer)
-	json.NewEncoder(b).Encode(u)
-
-	// 设置请求头
-	headers := map[string]string{
-		"Content-Type": "application/json",
-	}
-
-	// 发送POST请求
-	response, err := tools.Post(headers, url, bytes.NewReader(b.Bytes()), 10)
+	payload, err := json.Marshal(u)
 	if err != nil {
-		logrus.Error("发送腾讯云短信请求失败: " + err.Error())
-		return "", fmt.Errorf("发送腾讯云短信请求失败: %s", err.Error())
+		return "", err
 	}
-
-	defer response.Body.Close()
-	body, _ := io.ReadAll(response.Body)
-	return string(body), nil
+	post := t.postHTTP
+	if post == nil {
+		post = func(ctx context.Context, url string, body *bytes.Reader) (*http.Response, error) {
+			return tools.PostContext(ctx, nil, url, body, 10)
+		}
+	}
+	response, err := post(ctx, url, bytes.NewReader(payload))
+	if err != nil {
+		return "", delivery.RequestError(ctx, err)
+	}
+	body, err := delivery.ReadResponse(response)
+	if err != nil {
+		return "", err
+	}
+	if err := delivery.CheckTencent(body, mobiles); err != nil {
+		return "", err
+	}
+	return "OK", nil
 }
 
 // getSha256Code 计算SHA256摘要
