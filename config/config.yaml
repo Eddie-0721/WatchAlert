@@ -12,6 +12,11 @@ Evaluation:
   maxConcurrentQueries: 32
   maxDatasourcesPerRule: 4
 
+Probing:
+  # Shared by scheduled cycles (including writes) and interactive probes.
+  # Per process; requires restart after changing.
+  maxConcurrentRuns: 32
+
 Database:
   # 数据库类型: mysql 或 sqlite (默认: mysql)
   type: mysql

@@ -11,6 +11,7 @@ import (
 	"watchAlert/internal/models"
 	"watchAlert/internal/repo"
 	"watchAlert/internal/types"
+	"watchAlert/pkg/provider"
 )
 
 func validProbeConfig(endpoint string) models.ProbingEndpointConfig {
@@ -20,6 +21,45 @@ func validProbeConfig(endpoint string) models.ProbingEndpointConfig {
 	config.Strategy.Timeout = 30
 	config.Strategy.EvalInterval = 60
 	return config
+}
+
+func TestProbingOnceRejectsOverloadAndRecoversAfterRelease(t *testing.T) {
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 32; i++ {
+		release, err := provider.TryAcquireProbeSlot(context.Background())
+		if err != nil {
+			t.Fatal("capacity unexpectedly occupied", err)
+		}
+		releases = append(releases, release)
+	}
+	svc := probingService{ctx: &appctx.Context{Ctx: context.Background()}}
+	// Overload must fail before any network call, not return empty successful data.
+	request := &types.RequestProbingOnce{RuleType: "HTTP", ProbingEndpointConfig: validProbeConfig("unused.invalid")}
+	if data, err := svc.OnceContext(context.Background(), request); data != nil || err != provider.ErrProbeBusy {
+		t.Fatal("overload was not explicit", data, err)
+	}
+	releases[0]()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer server.Close()
+	request.ProbingEndpointConfig.Endpoint = server.URL
+	data, err := svc.OnceContext(context.Background(), request)
+	if err != nil {
+		t.Fatal("released capacity was not reusable", err)
+	}
+	metrics, ok := data.([]provider.Metrics)
+	if !ok || len(metrics) != 3 || metrics[2].Value != 1 {
+		t.Fatal("normal response changed", data)
+	}
+	release, err := provider.TryAcquireProbeSlot(context.Background())
+	if err != nil {
+		t.Fatal("interactive probe leaked slot", err)
+	}
+	release()
 }
 
 func TestProbingServiceRejectsInvalidConfigurationBeforePersistence(t *testing.T) {

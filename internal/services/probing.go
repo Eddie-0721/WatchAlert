@@ -200,6 +200,11 @@ func (m probingService) OnceContext(requestCtx context.Context, req interface{})
 	if err := probe.ValidateProbeConfig(r.RuleType, ruleConfig, false); err != nil {
 		return nil, err
 	}
+	release, err := provider.TryAcquireProbeSlot(requestCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	// 准备规则信息用于指标标签
 	ruleInfo := provider.ProbeRuleInfo{

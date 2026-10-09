@@ -18,6 +18,12 @@ type App struct {
 	// returned to the browser.
 	Agent      Agent      `json:"Agent"`
 	Evaluation Evaluation `json:"Evaluation"`
+	Probing    Probing    `json:"Probing"`
+}
+
+// Probing bounds scheduled cycles and interactive probes together per process.
+type Probing struct {
+	MaxConcurrentRuns int `json:"maxConcurrentRuns"`
 }
 
 // Evaluation limits apply to running datasource queries, not just startup.

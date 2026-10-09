@@ -50,7 +50,7 @@ func TestProbeStopCancelsCurrentTargetAndSkipsRemainingAndWrite(t *testing.T) {
 	service := NewProbeService(&appctx.Context{Ctx: context.Background()})
 	requestCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	service.watchCtxMap[rule.RuleId] = cancel
+	service.workers[rule.RuleId] = &probeWorker{rule: rule, enabled: true, cancel: cancel}
 	done := make(chan struct{})
 	go func() { defer close(done); service.executeProbing(requestCtx, rule) }()
 	select {

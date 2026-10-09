@@ -2,7 +2,9 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -11,26 +13,38 @@ import (
 	"watchAlert/pkg/provider"
 
 	"github.com/zeromicro/go-zero/core/logc"
-	"golang.org/x/sync/errgroup"
 )
 
 // ProbeService 拨测服务
 type ProbeService struct {
-	ctx         *ctx.Context
-	watchCtxMap map[string]context.CancelFunc
-	mu          sync.RWMutex
+	ctx     *ctx.Context
+	workers map[string]*probeWorker
+	mu      sync.RWMutex
 }
 
 // NewProbeService 创建新的拨测服务
 func NewProbeService(ctx *ctx.Context) *ProbeService {
 	return &ProbeService{
-		ctx:         ctx,
-		watchCtxMap: make(map[string]context.CancelFunc),
+		ctx:     ctx,
+		workers: make(map[string]*probeWorker),
 	}
 }
 
 // Add 添加拨测规则
 func (s *ProbeService) Add(rule models.ProbeRule) error {
+	return s.add(rule, s.executeProbing)
+}
+
+// Keep stopped workers registered until their old cycle actually exits. A
+// Stop/Add reload updates that same worker rather than overlapping generations.
+type probeWorker struct {
+	rule    models.ProbeRule
+	enabled bool
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+func (s *ProbeService) add(rule models.ProbeRule, execute func(context.Context, models.ProbeRule)) error {
 	if err := ValidateProbeRule(rule); err != nil {
 		return err
 	}
@@ -41,15 +55,18 @@ func (s *ProbeService) Add(rule models.ProbeRule) error {
 	}
 
 	// 检查规则是否已存在
-	if _, exists := s.watchCtxMap[rule.RuleId]; exists {
-		return fmt.Errorf("rule %s already exists", rule.RuleId)
+	if worker := s.workers[rule.RuleId]; worker != nil {
+		if worker.enabled {
+			return fmt.Errorf("rule %s already exists", rule.RuleId)
+		}
+		worker.rule, worker.enabled = rule, true
+		return nil
 	}
-
-	c, cancel := context.WithCancel(s.ctx.Ctx)
-	s.watchCtxMap[rule.RuleId] = cancel
+	worker := &probeWorker{rule: rule, enabled: true, done: make(chan struct{})}
+	s.workers[rule.RuleId] = worker
 
 	// 启动拨测协程
-	go s.runProbing(c, rule)
+	go s.runWorker(worker, execute)
 
 	logc.Infof(s.ctx.Ctx, "Added probing rule: %s (%s)", rule.RuleName, rule.RuleType)
 	return nil
@@ -60,13 +77,15 @@ func (s *ProbeService) Stop(ruleID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cancel, exists := s.watchCtxMap[ruleID]
+	worker, exists := s.workers[ruleID]
 	if !exists {
 		return fmt.Errorf("rule %s not found", ruleID)
 	}
 
-	cancel()
-	delete(s.watchCtxMap, ruleID)
+	worker.enabled = false
+	if worker.cancel != nil {
+		worker.cancel()
+	}
 	return nil
 }
 
@@ -75,7 +94,7 @@ func (s *ProbeService) StopAll() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	count := len(s.watchCtxMap)
+	count := len(s.workers)
 	if count == 0 {
 		return nil
 	}
@@ -83,9 +102,11 @@ func (s *ProbeService) StopAll() error {
 	logc.Infof(s.ctx.Ctx, "Stopping %d probing tasks...", count)
 
 	// 取消所有拨测任务
-	for ruleID, cancel := range s.watchCtxMap {
-		cancel()
-		delete(s.watchCtxMap, ruleID)
+	for _, worker := range s.workers {
+		worker.enabled = false
+		if worker.cancel != nil {
+			worker.cancel()
+		}
 	}
 
 	logc.Infof(s.ctx.Ctx, "Cancellation requested for all probing tasks")
@@ -96,11 +117,35 @@ func (s *ProbeService) StopAll() error {
 func (s *ProbeService) GetActiveRules() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.watchCtxMap)
+	count := 0
+	for _, worker := range s.workers {
+		if worker.enabled {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *ProbeService) runWorker(worker *probeWorker, execute func(context.Context, models.ProbeRule)) {
+	for {
+		s.mu.Lock()
+		if !worker.enabled || s.ctx.Ctx.Err() != nil {
+			delete(s.workers, worker.rule.RuleId)
+			close(worker.done)
+			s.mu.Unlock()
+			return
+		}
+		rule := worker.rule
+		requestCtx, cancel := context.WithCancel(s.ctx.Ctx)
+		worker.cancel = cancel
+		s.mu.Unlock()
+		s.runProbing(requestCtx, rule, execute)
+		cancel()
+	}
 }
 
 // runProbing 运行拨测
-func (s *ProbeService) runProbing(ctx context.Context, rule models.ProbeRule) {
+func (s *ProbeService) runProbing(ctx context.Context, rule models.ProbeRule, execute func(context.Context, models.ProbeRule)) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -108,17 +153,31 @@ func (s *ProbeService) runProbing(ctx context.Context, rule models.ProbeRule) {
 	defer timer.Stop()
 
 	// 立即执行一次
-	s.executeProbing(ctx, rule)
+	s.executeCycle(ctx, rule, execute)
 
 	for {
 		select {
 		case <-timer.C:
-			s.executeProbing(ctx, rule)
+			s.executeCycle(ctx, rule, execute)
 		case <-ctx.Done():
 			logc.Infof(s.ctx.Ctx, "Probing stopped for rule: %s", rule.RuleId)
 			return
 		}
 	}
+}
+
+func (s *ProbeService) executeCycle(requestCtx context.Context, rule models.ProbeRule, execute func(context.Context, models.ProbeRule)) {
+	release, err := provider.AcquireProbeSlot(requestCtx)
+	if err != nil {
+		return
+	}
+	defer release()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logc.Errorf(s.ctx.Ctx, "Probe cycle panicked, rule: %s, error: %v\n%s", rule.RuleId, recovered, debug.Stack())
+		}
+	}()
+	execute(requestCtx, rule)
 }
 
 // executeProbing 执行拨测
@@ -210,20 +269,15 @@ func (s *ProbeService) executeProbeWithMetrics(requestCtx context.Context, rule 
 // RePushRule 重新推送规则
 func (s *ProbeService) RePushRule() error {
 	var ruleList []models.ProbeRule
-	if err := s.ctx.DB.DB().Where("enabled = ?", true).Find(&ruleList).Error; err != nil {
+	if err := s.ctx.DB.DB().WithContext(s.ctx.Ctx).Where("enabled = ?", true).Find(&ruleList).Error; err != nil {
 		return fmt.Errorf("failed to fetch rules: %w", err)
 	}
 
-	g := new(errgroup.Group)
+	var failures []error
 	for _, rule := range ruleList {
-		rule := rule
-		g.Go(func() error {
-			if err := s.Add(rule); err != nil {
-				return fmt.Errorf("failed to add rule %s: %w", rule.RuleId, err)
-			}
-			return nil
-		})
+		if err := s.Add(rule); err != nil {
+			failures = append(failures, fmt.Errorf("failed to add rule %s: %w", rule.RuleId, err))
+		}
 	}
-
-	return g.Wait()
+	return errors.Join(failures...)
 }
