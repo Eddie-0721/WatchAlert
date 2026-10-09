@@ -46,7 +46,7 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 	if err != nil {
 		return err
 	}
-	capabilities, err := a.Capabilities(tenantId, userId)
+	settings, capabilities, err := a.agentRunSettings(requestCtx, tenantId, userId)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (a *agentService) StreamMessage(requestCtx context.Context, tenantId, userI
 		Messages: append(detail.Messages, userMessage), Context: req.Context,
 		AllowedTools: capabilities.AllowedTools, Scope: capabilities.Scope,
 	}
-	modelConfig, err := a.modelRuntimeConfig()
+	modelConfig, err := agentModelRuntimeConfig(settings.AgentConfig.Model)
 	if err != nil {
 		return err
 	}
@@ -143,20 +143,29 @@ func (a *agentService) ListSessions(tenantId, userId string) ([]models.AgentSess
 }
 
 func (a *agentService) Capabilities(tenantId, userId string) (types.AgentCapabilities, error) {
-	settings, err := a.ctx.DB.Setting().Get()
+	_, capabilities, err := a.agentRunSettings(context.Background(), tenantId, userId)
+	return capabilities, err
+}
+
+// A snapshot is local to this preparation only. Later tool calls and write
+// confirmations must still read current policy, not reuse this run's snapshot.
+func (a *agentService) agentRunSettings(ctx context.Context, tenantId, userId string) (models.Settings, types.AgentCapabilities, error) {
+	ctx, cancel := context.WithTimeout(ctx, agentDatabaseTimeout)
+	defer cancel()
+	settings, err := a.ctx.DB.Setting().GetContext(ctx)
 	if err != nil {
-		return types.AgentCapabilities{}, err
+		return settings, types.AgentCapabilities{}, err
 	}
-	allowedTools, err := a.allowedToolsForUser(tenantId, userId, settings.AgentConfig.AllowedTools)
+	allowedTools, err := a.allowedToolsForUser(ctx, tenantId, userId, settings.AgentConfig.AllowedTools)
 	if err != nil {
-		return types.AgentCapabilities{}, err
+		return settings, types.AgentCapabilities{}, err
 	}
-	return types.AgentCapabilities{
+	return settings, types.AgentCapabilities{
 		Enabled:      settings.AgentConfig.GetEnable(),
 		AllowedTools: allowedTools,
 		CanWrite:     hasWriteTool(allowedTools),
 		Scope:        agentScopeFromSettings(settings.AgentConfig.Scope),
-	}, nil
+	}, ctx.Err()
 }
 
 func (a *agentService) ProposeAction(claims agenttoken.Claims, tool string, arguments map[string]interface{}) (models.AgentPendingAction, error) {
@@ -297,7 +306,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	if err != nil {
 		return models.AgentMessage{}, err
 	}
-	capabilities, err := a.Capabilities(tenantId, userId)
+	settings, capabilities, err := a.agentRunSettings(requestCtx, tenantId, userId)
 	if err != nil {
 		return models.AgentMessage{}, err
 	}
@@ -344,7 +353,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 		AllowedTools: capabilities.AllowedTools,
 		Scope:        capabilities.Scope,
 	}
-	modelConfig, err := a.modelRuntimeConfig()
+	modelConfig, err := agentModelRuntimeConfig(settings.AgentConfig.Model)
 	if err != nil {
 		return models.AgentMessage{}, err
 	}
@@ -372,12 +381,7 @@ func (a *agentService) SendMessage(requestCtx context.Context, tenantId, userId 
 	return assistantMessage, nil
 }
 
-func (a *agentService) modelRuntimeConfig() (types.AgentModelRuntime, error) {
-	settings, err := a.ctx.DB.Setting().Get()
-	if err != nil {
-		return types.AgentModelRuntime{}, err
-	}
-	model := settings.AgentConfig.Model
+func agentModelRuntimeConfig(model models.AgentModelConfig) (types.AgentModelRuntime, error) {
 	if model.APIKeyEncrypted == "" {
 		// Keep the deployment-environment fallback for existing installations.
 		return types.AgentModelRuntime{}, nil
@@ -495,7 +499,7 @@ func defaultReadTools() []string {
 	}
 }
 
-func (a *agentService) allowedToolsForUser(tenantId, userId string, configured []string) ([]string, error) {
+func (a *agentService) allowedToolsForUser(ctx context.Context, tenantId, userId string, configured []string) ([]string, error) {
 	ceiling := configured
 	if len(ceiling) == 0 {
 		ceiling = defaultReadTools()
@@ -504,12 +508,12 @@ func (a *agentService) allowedToolsForUser(tenantId, userId string, configured [
 		return ceiling, nil
 	}
 
-	linked, err := a.ctx.DB.Tenant().GetTenantLinkedUserInfo(tenantId, userId)
+	linked, err := a.ctx.DB.Tenant().GetTenantLinkedUserInfoContext(ctx, tenantId, userId)
 	if err != nil {
 		return nil, err
 	}
 	var role models.UserRole
-	if err := a.ctx.DB.DB().Where("id = ?", linked.UserRole).First(&role).Error; err != nil {
+	if err := a.ctx.DB.DB().WithContext(ctx).Where("id = ?", linked.UserRole).First(&role).Error; err != nil {
 		return nil, err
 	}
 	permissions := make(map[string]struct{}, len(role.Permissions))

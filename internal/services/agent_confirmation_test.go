@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -18,6 +19,10 @@ type policySettings struct {
 }
 
 func (s *policySettings) Get() (models.Settings, error) { return s.settings, nil }
+
+func (s *policySettings) GetContext(ctx context.Context) (models.Settings, error) {
+	return s.settings, ctx.Err()
+}
 
 type policyRepo struct {
 	repo.InterEntryRepo

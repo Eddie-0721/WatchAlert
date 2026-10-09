@@ -25,6 +25,7 @@ type (
 		GetTenantLinkedUsers(tenantId string) (models.TenantLinkedUsers, error)
 		DelTenantLinkedUserRecord(tenantId string) error
 		GetTenantLinkedUserInfo(tenantId, userId string) (models.TenantUser, error)
+		GetTenantLinkedUserInfoContext(context.Context, string, string) (models.TenantUser, error)
 		ChangeTenantUserRole(tenantId, userId, userRole string) error
 	}
 )
@@ -333,12 +334,16 @@ func (tr TenantRepo) DelTenantLinkedUserRecord(tenantId string) error {
 
 // GetTenantLinkedUserInfo 获取租户关联用户的详细信息
 func (tr TenantRepo) GetTenantLinkedUserInfo(tenantId, userId string) (models.TenantUser, error) {
+	return tr.GetTenantLinkedUserInfoContext(context.Background(), tenantId, userId)
+}
+
+func (tr TenantRepo) GetTenantLinkedUserInfoContext(ctx context.Context, tenantId, userId string) (models.TenantUser, error) {
 	var (
 		tlu models.TenantLinkedUsers
 		tu  models.TenantUser
 	)
 
-	err := tr.db.Model(&models.TenantLinkedUsers{}).Where("id = ?", tenantId).First(&tlu).Error
+	err := tr.db.WithContext(ctx).Model(&models.TenantLinkedUsers{}).Where("id = ?", tenantId).First(&tlu).Error
 	if err != nil {
 		return tu, err
 	}

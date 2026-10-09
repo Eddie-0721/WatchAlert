@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"gorm.io/gorm"
 	"watchAlert/internal/models"
 )
@@ -14,6 +15,7 @@ type (
 		Create(r models.Settings) error
 		Update(r models.Settings) error
 		Get() (models.Settings, error)
+		GetContext(context.Context) (models.Settings, error)
 		Check() bool
 	}
 )
@@ -48,10 +50,12 @@ func (a settingRepo) Update(r models.Settings) error {
 }
 
 func (a settingRepo) Get() (models.Settings, error) {
+	return a.GetContext(context.Background())
+}
+
+func (a settingRepo) GetContext(ctx context.Context) (models.Settings, error) {
 	var data models.Settings
-	db := a.db.Model(models.Settings{})
-	db.Where("is_init = ?", 1)
-	err := db.First(&data).Error
+	err := a.db.WithContext(ctx).Where("is_init = ?", 1).First(&data).Error
 	return data, err
 }
 

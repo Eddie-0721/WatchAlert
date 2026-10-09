@@ -25,7 +25,7 @@ type AgentDiagnostics struct {
 // Diagnostics never generates model output or executes a business Tool.
 func (a *agentService) Diagnostics(requestCtx context.Context, tenantID, userID string) (AgentDiagnostics, error) {
 	result := AgentDiagnostics{CheckedAt: time.Now().Unix(), Checks: []AgentDiagnosticCheck{}}
-	capabilities, err := a.Capabilities(tenantID, userID)
+	settings, capabilities, err := a.agentRunSettings(requestCtx, tenantID, userID)
 	if err != nil {
 		return result, err
 	}
@@ -39,7 +39,7 @@ func (a *agentService) Diagnostics(requestCtx context.Context, tenantID, userID 
 		status = "ok"
 	}
 	result.Checks = append(result.Checks, AgentDiagnosticCheck{"permissions", status})
-	model, err := a.modelRuntimeConfig()
+	model, err := agentModelRuntimeConfig(settings.AgentConfig.Model)
 	if err != nil {
 		result.Checks = append(result.Checks, AgentDiagnosticCheck{"credentials", "invalid"})
 		return result, nil
