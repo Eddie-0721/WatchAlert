@@ -17,6 +17,7 @@ type (
 	InterDatasourceRepo interface {
 		List(tenantId, datasourceId, datasourceType, query string) ([]models.AlertDataSource, error)
 		ListContext(context.Context, string, string, string, string) ([]models.AlertDataSource, error)
+		ListSummariesContext(context.Context, string, string) ([]models.AlertDataSource, error)
 		Get(datasourceId string) (models.AlertDataSource, error)
 		GetForTenant(tenantId, datasourceId string) (models.AlertDataSource, error)
 		GetForTenantContext(context.Context, string, string) (models.AlertDataSource, error)
@@ -62,6 +63,21 @@ func (ds DatasourceRepo) ListContext(ctx context.Context, tenantId, datasourceId
 	}
 
 	err := db.Find(&data).Error
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// ListSummariesContext returns display metadata only, never connection/auth
+// configuration. Use GetForTenantContext when an actual query needs credentials.
+func (ds DatasourceRepo) ListSummariesContext(ctx context.Context, tenantID, datasourceType string) ([]models.AlertDataSource, error) {
+	if strings.TrimSpace(tenantID) == "" || tenantID == "null" || tenantID == "undefined" {
+		return nil, fmt.Errorf("租户不能为空")
+	}
+	var data []models.AlertDataSource
+	err := ds.db.WithContext(ctx).Select("id", "name", "type", "labels", "description", "enabled").
+		Where("tenant_id = ? AND type = ?", tenantID, datasourceType).Find(&data).Error
 	if err != nil {
 		return nil, err
 	}

@@ -70,7 +70,7 @@ type toolDatasourceFixture struct {
 	observed bool
 }
 
-func (d *toolDatasourceFixture) ListContext(ctx context.Context, tenant, id, kind, query string) ([]models.AlertDataSource, error) {
+func (d *toolDatasourceFixture) ListSummariesContext(ctx context.Context, tenant, kind string) ([]models.AlertDataSource, error) {
 	d.observed = tenant == "t" && kind == "Prometheus"
 	return nil, ctx.Err()
 }

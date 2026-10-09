@@ -55,6 +55,10 @@ func TestAgentToolReadContextsAndFilters(t *testing.T) {
 			_, err := source.ListContext(ctx, "t", "", "Prometheus", "")
 			return err
 		},
+		"summaries": func(ctx context.Context) error {
+			_, err := source.ListSummariesContext(ctx, "t", "Prometheus")
+			return err
+		},
 		"datasource": func(ctx context.Context) error { _, err := source.GetForTenantContext(ctx, "t", "ds"); return err },
 		"silences": func(ctx context.Context) error {
 			_, _, err := silence.ListContext(ctx, "t", "fc", "", "all", models.Page{Index: 1, Size: 20})

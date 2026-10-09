@@ -230,7 +230,7 @@ func (a *agentToolService) searchSilences(requestCtx context.Context, arguments 
 func (a *agentToolService) listPrometheusDatasources(requestCtx context.Context, claims agenttoken.Claims) (interface{}, error) {
 	requestCtx, cancel := context.WithTimeout(requestCtx, agentDatabaseTimeout)
 	defer cancel()
-	sources, err := a.ctx.DB.Datasource().ListContext(requestCtx, claims.TenantId, "", provider.PrometheusDsProvider, "")
+	sources, err := a.ctx.DB.Datasource().ListSummariesContext(requestCtx, claims.TenantId, provider.PrometheusDsProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -248,11 +248,18 @@ func (a *agentToolService) listPrometheusDatasources(requestCtx context.Context,
 }
 
 func (a *agentToolService) getRulePromQL(requestCtx context.Context, arguments map[string]interface{}, tenantId string) (interface{}, error) {
-	data, err := a.getRule(requestCtx, arguments, tenantId)
-	if err != nil {
+	requestCtx, cancel := context.WithTimeout(requestCtx, agentDatabaseTimeout)
+	defer cancel()
+	ruleID := stringArgument(arguments, "ruleId")
+	if ruleID == "" {
+		return nil, fmt.Errorf("ruleId 不能为空")
+	}
+	var rule models.AlertRule
+	if err := a.ctx.DB.DB().WithContext(requestCtx).
+		Select("rule_id", "rule_name", "datasource_id_list", "prometheus_config").
+		Where("tenant_id = ? AND rule_id = ?", tenantId, ruleID).First(&rule).Error; err != nil {
 		return nil, err
 	}
-	rule := data.(models.AlertRule)
 	return map[string]interface{}{
 		"ruleId": rule.RuleId, "ruleName": rule.RuleName, "datasourceIds": rule.DatasourceIdList,
 		"promql": rule.PrometheusConfig.PromQL, "severityRules": rule.PrometheusConfig.Rules,

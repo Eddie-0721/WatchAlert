@@ -11,7 +11,7 @@ import (
 	"watchAlert/internal/types"
 )
 
-func eventTestDB(t *testing.T) *gorm.DB {
+func eventTestDB(t testing.TB) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
