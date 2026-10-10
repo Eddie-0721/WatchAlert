@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"watchAlert/internal/models"
 
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 var ErrEventChanged = errors.New("alert changed concurrently; refresh and retry")
@@ -72,7 +72,7 @@ func (a *AlertCache) updateExisting(requestCtx context.Context, expected models.
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		raw, err := a.rc.HGet(key, expected.Fingerprint).Result()
+		raw, err := a.rc.HGet(requestCtx, key, expected.Fingerprint).Result()
 		if err == redis.Nil {
 			return false, nil
 		}
@@ -100,7 +100,7 @@ func (a *AlertCache) updateExisting(requestCtx context.Context, expected models.
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		result, err := eventValueCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, "update", raw, string(updated), ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
+		result, err := eventValueCAS.Run(requestCtx, a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, "update", raw, string(updated), ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
 		if err != nil {
 			return false, err
 		}
@@ -182,7 +182,7 @@ func (a *AlertCache) pushEvaluationEvent(event *models.AlertCurEvent) error {
 	}
 	key := string(models.BuildAlertEventCacheKey(event.TenantId, event.FaultCenterId))
 	for attempt := 0; attempt < eventCASAttempts; attempt++ {
-		raw, err := a.rc.HGet(key, event.Fingerprint).Result()
+		raw, err := a.rc.HGet(context.Background(), key, event.Fingerprint).Result()
 		if err != nil && err != redis.Nil {
 			return err
 		}
@@ -238,7 +238,7 @@ func (a *AlertCache) pushEvaluationEvent(event *models.AlertCurEvent) error {
 				return err
 			}
 		}
-		result, err := eventValueCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, event.Fingerprint, mode, raw, string(updated), ruleIndexMember(event.RuleId, event.Fingerprint)).Int()
+		result, err := eventValueCAS.Run(context.Background(), a.rc, []string{key, ruleIndexKey(key)}, event.Fingerprint, mode, raw, string(updated), ruleIndexMember(event.RuleId, event.Fingerprint)).Int()
 		if err != nil {
 			return err
 		}

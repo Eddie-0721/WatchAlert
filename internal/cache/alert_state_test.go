@@ -9,9 +9,10 @@ import (
 	"sync"
 	"testing"
 	"watchAlert/internal/models"
+	"watchAlert/internal/testutil"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 func eventStateFixture(t *testing.T) (*AlertCache, *miniredis.Miniredis, models.AlertCurEvent) {
@@ -173,7 +174,7 @@ func TestAlertCASRetriesConcurrentEditWithoutOverwritingIt(t *testing.T) {
 	c, s, e := eventStateFixture(t)
 	key := string(models.BuildAlertEventCacheKey("t", "fc"))
 	injected := false
-	c.rc.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(c.rc, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			if !injected && (cmd.Name() == "evalsha" || cmd.Name() == "eval") {
 				injected = true
@@ -253,7 +254,7 @@ func TestAlertCASConflictRetriesAreBounded(t *testing.T) {
 	if ok, err := c.UpdateNotificationTime(context.Background(), e, 100, false); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	c.rc.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(c.rc, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			if cmd.Name() == "evalsha" {
 				calls++

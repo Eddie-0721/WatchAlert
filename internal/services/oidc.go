@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -155,7 +156,7 @@ func (os oidcService) CookieConvertToken(ctx *gin.Context) (interface{}, interfa
 	}
 
 	duration := time.Duration(config.Application.Jwt.Expire) * time.Second
-	os.ctx.Redis.Redis().Set("uid-"+data.UserId, tools.JsonMarshalToString(r), duration)
+	os.ctx.Redis.Redis().Set(context.Background(), "uid-"+data.UserId, tools.JsonMarshalToString(r), duration)
 
 	return models.ResponseLoginInfo{
 		Token:      tokenData,

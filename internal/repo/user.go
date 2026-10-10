@@ -156,14 +156,14 @@ func (ur UserRepo) ChangeCache(userId string) {
 	ur.db.Model(&models.Member{}).Where("user_id = ?", userId).First(&dbUser)
 
 	var cacheUser models.Member
-	result, err := client.Redis.Get("uid-" + userId).Result()
+	result, err := client.Redis.Get(context.Background(), "uid-"+userId).Result()
 	if err != nil {
 		logc.Error(context.Background(), err)
 	}
 	_ = sonic.Unmarshal([]byte(result), &cacheUser)
 
-	duration, _ := client.Redis.TTL("uid-" + userId).Result()
-	client.Redis.Set("uid-"+userId, tools.JsonMarshalToString(dbUser), duration)
+	duration, _ := client.Redis.TTL(context.Background(), "uid-"+userId).Result()
+	client.Redis.Set(context.Background(), "uid-"+userId, tools.JsonMarshalToString(dbUser), duration)
 }
 
 func (ur UserRepo) ChangePass(userId, password string) error {

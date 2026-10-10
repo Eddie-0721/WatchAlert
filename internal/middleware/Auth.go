@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"time"
 	"watchAlert/internal/ctx"
 	"watchAlert/internal/models"
@@ -24,7 +25,7 @@ func Auth() gin.HandlerFunc {
 		// 优先检查 JWT Token
 		if tokenStr != "" {
 			// 校验 Token
-			ok := IsTokenValid(ctx.DO(), tokenStr)
+			ok := isTokenValidContext(context.Request.Context(), ctx.DO(), tokenStr)
 			if !ok {
 				response.TokenFail(context)
 				context.Abort()
@@ -56,6 +57,10 @@ func Auth() gin.HandlerFunc {
 }
 
 func IsTokenValid(ctx *ctx.Context, tokenStr string) bool {
+	return isTokenValidContext(context.Background(), ctx, tokenStr)
+}
+
+func isTokenValidContext(requestCtx context.Context, ctx *ctx.Context, tokenStr string) bool {
 	// Bearer Token, 获取 Token 值
 	tokenStr, ok := tools.BearerToken(tokenStr)
 	if !ok || ctx == nil {
@@ -74,7 +79,7 @@ func IsTokenValid(ctx *ctx.Context, tokenStr string) bool {
 
 	// 密码校验, 当修改密码后其他已登陆的终端会被下线。
 	var user models.Member
-	result, err := ctx.Redis.Redis().Get("uid-" + token.ID).Result()
+	result, err := ctx.Redis.Redis().Get(requestCtx, "uid-"+token.ID).Result()
 	if err != nil {
 		logc.Errorf(ctx.Ctx, "get user by id error: %v", err)
 		return false

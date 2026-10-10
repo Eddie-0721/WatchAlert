@@ -1,10 +1,10 @@
 package cache
 
 import (
+	"context"
 	"github.com/bytedance/sonic"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logc"
-	"golang.org/x/net/context"
 	"sync"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/tools"
@@ -32,7 +32,7 @@ func newFaultCenterCacheInterface(r *redis.Client) FaultCenterCacheInterface {
 
 // PushFaultCenterInfo 添加 Info 数据
 func (f *FaultCenterCache) PushFaultCenterInfo(center models.FaultCenter) {
-	err := f.rc.Set(string(models.BuildFaultCenterInfoCacheKey(center.TenantId, center.ID)), tools.JsonMarshalToString(center), 0).Err()
+	err := f.rc.Set(context.Background(), string(models.BuildFaultCenterInfoCacheKey(center.TenantId, center.ID)), tools.JsonMarshalToString(center), 0).Err()
 	if err != nil {
 		logc.Errorf(context.Background(), "%s", err.Error())
 		return
@@ -41,7 +41,7 @@ func (f *FaultCenterCache) PushFaultCenterInfo(center models.FaultCenter) {
 
 // GetFaultCenterInfo 获取 Info 数据
 func (f *FaultCenterCache) GetFaultCenterInfo(faultCenterInfoKey models.FaultCenterInfoCacheKey) models.FaultCenter {
-	result, err := f.rc.Get(string(faultCenterInfoKey)).Result()
+	result, err := f.rc.Get(context.Background(), string(faultCenterInfoKey)).Result()
 	if err != nil {
 		return models.FaultCenter{}
 	}
@@ -53,5 +53,5 @@ func (f *FaultCenterCache) GetFaultCenterInfo(faultCenterInfoKey models.FaultCen
 
 // RemoveFaultCenterInfo 删除 Info 数据
 func (f *FaultCenterCache) RemoveFaultCenterInfo(faultCenterInfoKey models.FaultCenterInfoCacheKey) {
-	f.rc.Del(string(faultCenterInfoKey))
+	f.rc.Del(context.Background(), string(faultCenterInfoKey))
 }

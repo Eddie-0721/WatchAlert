@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/bytedance/sonic"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"sync"
 	"watchAlert/internal/models"
 	"watchAlert/pkg/tools"
@@ -95,7 +95,7 @@ func (sc *SilenceCache) listSilenceSnapshotsContext(ctx context.Context, tenantI
 		return nil, err
 	}
 	key := models.BuildAlertMuteCacheKey(tenantID, centerID)
-	mapping, err := sc.getRedisAllHashMap(key)
+	mapping, err := sc.rc.HGetAll(ctx, string(key)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (sc *SilenceCache) CompareAndSwapSilenceStatus(before SilenceSnapshot, stat
 	if err != nil {
 		return false, err
 	}
-	updated, err := silenceStatusCAS.Run(sc.rc, []string{string(before.key)}, before.field, before.raw, raw, status).Int()
+	updated, err := silenceStatusCAS.Run(context.Background(), sc.rc, []string{string(before.key)}, before.field, before.raw, raw, status).Int()
 	return updated == 1, err
 }
 
@@ -180,20 +180,20 @@ func (sc *SilenceCache) WithIdGetMuteFromCache(tenantId, faultCenterId, id strin
 
 // setRedisHash 设置 Redis 哈希表中的值
 func (sc *SilenceCache) setRedisHash(key models.AlertMuteCacheKey, field string, value interface{}) error {
-	return sc.rc.HSet(string(key), field, value).Err()
+	return sc.rc.HSet(context.Background(), string(key), field, value).Err()
 }
 
 // deleteRedisHash 删除 Redis 哈希表中的值
 func (sc *SilenceCache) deleteRedisHash(key models.AlertMuteCacheKey, field string) error {
-	return sc.rc.HDel(string(key), field).Err()
+	return sc.rc.HDel(context.Background(), string(key), field).Err()
 }
 
 // getRedisHash 获取 Redis 哈希表中的值
 func (sc *SilenceCache) getRedisHash(key models.AlertMuteCacheKey, field string) ([]byte, error) {
-	return sc.rc.HGet(string(key), field).Bytes()
+	return sc.rc.HGet(context.Background(), string(key), field).Bytes()
 }
 
 // getRedisAllMap 获取 Redis 哈希表Map
 func (sc *SilenceCache) getRedisAllHashMap(key models.AlertMuteCacheKey) (map[string]string, error) {
-	return sc.rc.HGetAll(string(key)).Result()
+	return sc.rc.HGetAll(context.Background(), string(key)).Result()
 }

@@ -3,7 +3,7 @@ package cache
 import (
 	"encoding/json"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"sync"
 	"sync/atomic"
 	"testing"

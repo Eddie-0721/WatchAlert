@@ -10,7 +10,7 @@ import (
 	"watchAlert/internal/models"
 
 	"github.com/bytedance/sonic"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logc"
 )
 
@@ -87,7 +87,7 @@ func (a *AlertCache) GetRuleEvents(requestCtx context.Context, key models.AlertE
 			}
 		}
 		for attempt := 0; attempt < 2; attempt++ {
-			value, err := readRuleIndex.Run(a.rc.WithContext(requestCtx), []string{source, ruleIndexKey(source)}, ruleIndexPrefix(rule)).Result()
+			value, err := readRuleIndex.Run(requestCtx, a.rc, []string{source, ruleIndexKey(source)}, ruleIndexPrefix(rule)).Result()
 			if err != nil {
 				a.indexReady.Delete(source)
 				logc.Errorf(requestCtx, "Rule index read failed, falling back to source: %v", err)
@@ -136,7 +136,7 @@ func (a *AlertCache) readRuleEventsFull(requestCtx context.Context, source, tena
 	if err := requestCtx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := a.rc.WithContext(requestCtx).HGetAll(source).Result()
+	rows, err := a.rc.HGetAll(requestCtx, source).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -176,8 +176,8 @@ func (a *AlertCache) rebuildRuleIndex(requestCtx context.Context, source, tenant
 			if err := requestCtx.Err(); err != nil {
 				return nil, err
 			}
-			err := a.rc.WithContext(requestCtx).Watch(func(tx *redis.Tx) error {
-				rows, err := tx.HGetAll(source).Result()
+			err := a.rc.Watch(requestCtx, func(tx *redis.Tx) error {
+				rows, err := tx.HGetAll(requestCtx, source).Result()
 				if err != nil {
 					return err
 				}
@@ -196,9 +196,9 @@ func (a *AlertCache) rebuildRuleIndex(requestCtx context.Context, source, tenant
 				if err := requestCtx.Err(); err != nil {
 					return err
 				}
-				_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
-					pipe.Del(ruleIndexKey(source))
-					pipe.ZAdd(ruleIndexKey(source), members...)
+				_, err = tx.TxPipelined(requestCtx, func(pipe redis.Pipeliner) error {
+					pipe.Del(requestCtx, ruleIndexKey(source))
+					pipe.ZAdd(requestCtx, ruleIndexKey(source), members...)
 					return nil
 				})
 				return err

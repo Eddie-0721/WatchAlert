@@ -7,10 +7,11 @@ import (
 	"reflect"
 	"testing"
 	"watchAlert/internal/models"
+	"watchAlert/internal/testutil"
 	"watchAlert/internal/types"
 	"watchAlert/pkg/agenttoken"
 
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestExactEventSelectionPreservesFiltersSummaryAndPagination(t *testing.T) {
@@ -51,7 +52,7 @@ func TestExactEventReadsOnlyRequestedHashField(t *testing.T) {
 	service, _, _ := redisEventFixture(t, 1000)
 	key := string(models.BuildAlertEventCacheKey("t", "fc"))
 	var eventCommands []string
-	service.ctx.Redis.Redis().WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(service.ctx.Redis.Redis(), func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			if len(cmd.Args()) > 1 && fmt.Sprint(cmd.Args()[1]) == key {
 				eventCommands = append(eventCommands, cmd.Name())

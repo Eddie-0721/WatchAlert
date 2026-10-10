@@ -18,7 +18,7 @@ type EventStateCounts struct {
 // CountEventStates keeps the full typed decoder's validity rules, but neither
 // hash fields nor a retained map of decoded events are needed for a count.
 // HVALS still reads the complete hash atomically; this is not a cached index or
-// a partial HSCAN snapshot. Redis v6 in-flight I/O is not context-cancelable.
+// a partial HSCAN snapshot. The caller's deadline bounds Redis network I/O.
 func (a *AlertCache) CountEventStates(ctx context.Context, key models.AlertEventCacheKey) (EventStateCounts, error) {
 	if err := ctx.Err(); err != nil {
 		return EventStateCounts{}, err
@@ -28,7 +28,7 @@ func (a *AlertCache) CountEventStates(ctx context.Context, key models.AlertEvent
 	if err := ctx.Err(); err != nil {
 		return EventStateCounts{}, err
 	}
-	values, err := a.rc.HVals(string(key)).Result()
+	values, err := a.rc.HVals(ctx, string(key)).Result()
 	if canceled := ctx.Err(); canceled != nil {
 		return EventStateCounts{}, canceled
 	}

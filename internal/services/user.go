@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -120,7 +121,7 @@ func (us userService) Login(req interface{}) (interface{}, interface{}) {
 	}
 
 	duration := time.Duration(config.Application.Jwt.Expire) * time.Second
-	us.ctx.Redis.Redis().Set("uid-"+data.UserId, tools.JsonMarshalToString(r), duration)
+	us.ctx.Redis.Redis().Set(context.Background(), "uid-"+data.UserId, tools.JsonMarshalToString(r), duration)
 
 	return models.ResponseLoginInfo{
 		Token:      tokenData,

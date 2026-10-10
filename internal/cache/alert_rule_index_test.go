@@ -8,9 +8,10 @@ import (
 	"testing"
 	"watchAlert/config"
 	"watchAlert/internal/models"
+	"watchAlert/internal/testutil"
 
 	"github.com/alicebob/miniredis/v2/server"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 func enableRuleIndex(t *testing.T) {
@@ -37,7 +38,7 @@ func TestRuleIndexWarmReadOnlyTransfersSelectedRule(t *testing.T) {
 	}
 	var commands []string
 	replyValues := 0
-	c.rc.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(c.rc, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			commands = append(commands, cmd.Name())
 			err := next(cmd)
@@ -96,7 +97,7 @@ func TestRuleIndexTracksCreatesClaimsAndBothDeletePaths(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatal("deleted members remain", got, err)
 	}
-	if count := c.rc.ZCard(ruleIndexKey(string(key))).Val(); count != 1 {
+	if count := c.rc.ZCard(context.Background(), ruleIndexKey(string(key))).Val(); count != 1 {
 		t.Fatal("orphaned index members", count)
 	}
 }
@@ -111,7 +112,7 @@ func TestRuleIndexRebuildsMissingPartialAndRestartedDerivedData(t *testing.T) {
 	}
 	for _, damage := range []func(){
 		func() { s.Del(index) },
-		func() { c.rc.ZRem(index, ruleIndexMember("rule", "fp")) },
+		func() { c.rc.ZRem(context.Background(), index, ruleIndexMember("rule", "fp")) },
 		func() {
 			extra := event
 			extra.Fingerprint = "legacy-added"
@@ -127,8 +128,8 @@ func TestRuleIndexRebuildsMissingPartialAndRestartedDerivedData(t *testing.T) {
 	}
 	// Same-cardinality out-of-band mutations are not detectable from counts;
 	// a fresh process must rebuild even when a completion marker survived.
-	c.rc.ZRem(index, ruleIndexMember("rule", "fp"))
-	c.rc.ZAdd(index, redis.Z{Member: ruleIndexMember("wrong", "fp")})
+	c.rc.ZRem(context.Background(), index, ruleIndexMember("rule", "fp"))
+	c.rc.ZAdd(context.Background(), index, redis.Z{Member: ruleIndexMember("wrong", "fp")})
 	restarted := &AlertCache{rc: c.rc}
 	got, err := restarted.GetRuleEvents(context.Background(), key, "t", "rule")
 	if err != nil || len(got) != 2 {

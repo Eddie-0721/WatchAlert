@@ -6,9 +6,10 @@ import (
 	"reflect"
 	"testing"
 	"watchAlert/internal/models"
+	"watchAlert/internal/testutil"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestExactEventReadMatchesFullDecode(t *testing.T) {
@@ -63,7 +64,7 @@ func TestExactEventReadCancellation(t *testing.T) {
 			if phase == "before" {
 				cancel()
 			} else {
-				client.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+				testutil.WrapRedisProcess(client, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 					return func(cmd redis.Cmder) error { err := next(cmd); cancel(); return err }
 				})
 			}

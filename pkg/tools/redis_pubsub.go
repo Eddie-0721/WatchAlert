@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logc"
 )
 
@@ -41,7 +41,7 @@ func PublishReloadMessage(ctx context.Context, client *redis.Client, channel str
 		return fmt.Errorf("failed to marshal reload message: %v", err)
 	}
 
-	err = client.Publish(channel, string(data)).Err()
+	err = client.Publish(ctx, channel, string(data)).Err()
 	if err != nil {
 		return fmt.Errorf("failed to publish reload message: %v", err)
 	}
@@ -54,13 +54,17 @@ func PublishReloadMessage(ctx context.Context, client *redis.Client, channel str
 
 // SubscribeReloadMessages 订阅重载消息
 func SubscribeReloadMessages(ctx context.Context, client *redis.Client, channel string, handler func(msg ReloadMessage)) {
-	pubsub := client.Subscribe(channel)
+	pubsub := client.Subscribe(ctx, channel)
 	defer pubsub.Close()
+	// Receive has no command deadline for a long-lived subscription. Close only
+	// this dedicated PubSub connection on cancellation, never the shared client.
+	stop := context.AfterFunc(ctx, func() { _ = pubsub.Close() })
+	defer stop()
 
 	logc.Infof(ctx, "[Leader] 开始订阅消息: channel=%s", channel)
 
 	// 等待订阅确认
-	_, err := pubsub.Receive()
+	_, err := pubsub.Receive(ctx)
 	if err != nil {
 		logc.Errorf(ctx, "Failed to subscribe to channel %s: %v", channel, err)
 		return
@@ -70,7 +74,10 @@ func SubscribeReloadMessages(ctx context.Context, client *redis.Client, channel 
 	ch := pubsub.Channel()
 	for {
 		select {
-		case redisMsg := <-ch:
+		case redisMsg, ok := <-ch:
+			if !ok {
+				return
+			}
 			var msg ReloadMessage
 			if err := json.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
 				logc.Errorf(ctx, "Failed to unmarshal reload message: %v", err)

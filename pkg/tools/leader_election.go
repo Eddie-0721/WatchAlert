@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logc"
 )
 
@@ -73,7 +73,7 @@ func (le *LeaderElector) electionLoop() {
 // tryBecomeLeader 尝试成为 Leader
 func (le *LeaderElector) tryBecomeLeader() {
 	// 尝试获取 Leader 锁
-	ok, err := le.client.SetNX(LeaderElectionKey, le.instanceID, time.Duration(LeaderTTL)*time.Second).Result()
+	ok, err := le.client.SetNX(le.ctx, LeaderElectionKey, le.instanceID, time.Duration(LeaderTTL)*time.Second).Result()
 	if err != nil {
 		logc.Errorf(le.ctx, "Leader 选举失败: %v", err)
 		return
@@ -84,7 +84,7 @@ func (le *LeaderElector) tryBecomeLeader() {
 		le.promoteToLeader()
 	} else {
 		// 未获取到锁，检查当前 Leader
-		currentLeader, err := le.client.Get(LeaderElectionKey).Result()
+		currentLeader, err := le.client.Get(le.ctx, LeaderElectionKey).Result()
 		if err == redis.Nil {
 			// Leader 已失效，重试
 			le.tryBecomeLeader()
@@ -178,7 +178,7 @@ func (le *LeaderElector) renewLeadership() error {
 		end
 	`
 
-	result, err := le.client.Eval(script, []string{LeaderElectionKey}, le.instanceID, LeaderTTL).Result()
+	result, err := le.client.Eval(le.ctx, script, []string{LeaderElectionKey}, le.instanceID, LeaderTTL).Result()
 	if err != nil {
 		return fmt.Errorf("续期失败: %v", err)
 	}
@@ -192,7 +192,7 @@ func (le *LeaderElector) renewLeadership() error {
 
 // checkLeaderStatus 检查 Leader 状态
 func (le *LeaderElector) checkLeaderStatus() {
-	currentLeader, err := le.client.Get(LeaderElectionKey).Result()
+	currentLeader, err := le.client.Get(le.ctx, LeaderElectionKey).Result()
 
 	if err == redis.Nil {
 		// Leader 已失效，尝试成为 Leader
@@ -230,7 +230,11 @@ func (le *LeaderElector) resign() {
 		end
 	`
 
-	_, err := le.client.Eval(script, []string{LeaderElectionKey}, le.instanceID).Result()
+	// Resignation runs after the election context is canceled. Keep cleanup
+	// independent but bounded; never revive ordinary election work.
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := le.client.Eval(cleanupCtx, script, []string{LeaderElectionKey}, le.instanceID).Result()
 	if err != nil {
 		logc.Errorf(le.ctx, "辞去 Leader 失败: %v", err)
 	}
@@ -245,7 +249,7 @@ func (le *LeaderElector) IsLeader() bool {
 
 // GetLeaderID 获取当前 Leader 的实例 ID
 func (le *LeaderElector) GetLeaderID() (string, error) {
-	leaderID, err := le.client.Get(LeaderElectionKey).Result()
+	leaderID, err := le.client.Get(le.ctx, LeaderElectionKey).Result()
 	if err == redis.Nil {
 		return "", fmt.Errorf("当前没有 Leader")
 	}

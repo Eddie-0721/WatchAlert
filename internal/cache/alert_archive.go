@@ -3,7 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"watchAlert/internal/models"
 )
 
@@ -26,7 +26,7 @@ func (a *AlertCache) RemoveRecoveredEvent(requestCtx context.Context, expected m
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		raw, err := a.rc.HGet(key, expected.Fingerprint).Result()
+		raw, err := a.rc.HGet(requestCtx, key, expected.Fingerprint).Result()
 		if err == redis.Nil {
 			return false, nil
 		}
@@ -43,7 +43,7 @@ func (a *AlertCache) RemoveRecoveredEvent(requestCtx context.Context, expected m
 		if err := requestCtx.Err(); err != nil {
 			return false, err
 		}
-		removed, err := recoveredEventDeleteCAS.Run(a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, raw, ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
+		removed, err := recoveredEventDeleteCAS.Run(requestCtx, a.rc, []string{key, ruleIndexKey(key)}, expected.Fingerprint, raw, ruleIndexMember(expected.RuleId, expected.Fingerprint)).Int()
 		if err != nil {
 			return false, err
 		}

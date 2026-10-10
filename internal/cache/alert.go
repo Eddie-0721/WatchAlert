@@ -7,7 +7,7 @@ import (
 	"watchAlert/internal/models"
 
 	"github.com/bytedance/sonic"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logc"
 	"golang.org/x/sync/singleflight"
 )
@@ -62,8 +62,8 @@ func (a *AlertCache) GetAllEvents(key models.AlertEventCacheKey) (map[string]*mo
 	return a.GetAllEventsContext(context.Background(), key)
 }
 
-// Redis v6 cannot interrupt an in-flight socket read through WithContext.
-// Check cancellation before I/O, after it, and during decoding instead.
+// Pass the caller's deadline into Redis, and still check cancellation while
+// decoding. A canceled request must not become an empty successful snapshot.
 func (a *AlertCache) GetAllEventsContext(ctx context.Context, key models.AlertEventCacheKey) (map[string]*models.AlertCurEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (a *AlertCache) GetAllEventsContext(ctx context.Context, key models.AlertEv
 		return nil, err
 	}
 
-	result, err := a.getEventCacheHashAll(key)
+	result, err := a.rc.HGetAll(ctx, string(key)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (a *AlertCache) GetEventsByFingerprintContext(ctx context.Context, key mode
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := a.rc.HGet(string(key), fingerprint).Result()
+	raw, err := a.rc.HGet(ctx, string(key), fingerprint).Result()
 	if canceled := ctx.Err(); canceled != nil {
 		return nil, canceled
 	}
@@ -168,15 +168,15 @@ func (a *AlertCache) GetEventFromCache(tenantId, faultCenterId, fingerprint stri
 
 // 封装 Redis 操作
 func (a *AlertCache) deleteEventCacheHash(key models.AlertEventCacheKey, field string) {
-	if err := deleteIndexedEvent.Run(a.rc, []string{string(key), ruleIndexKey(string(key))}, field).Err(); err != nil {
+	if err := deleteIndexedEvent.Run(context.Background(), a.rc, []string{string(key), ruleIndexKey(string(key))}, field).Err(); err != nil {
 		logc.Errorf(context.Background(), "Delete alert cache failed: %v", err)
 	}
 }
 
 func (a *AlertCache) getEventCacheHash(key models.AlertEventCacheKey, field string) (string, error) {
-	return a.rc.HGet(string(key), field).Result()
+	return a.rc.HGet(context.Background(), string(key), field).Result()
 }
 
 func (a *AlertCache) getEventCacheHashAll(key models.AlertEventCacheKey) (map[string]string, error) {
-	return a.rc.HGetAll(string(key)).Result()
+	return a.rc.HGetAll(context.Background(), string(key)).Result()
 }

@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"watchAlert/internal/testutil"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"watchAlert/internal/models"
 )
 
@@ -71,8 +72,15 @@ func TestCacheQueryCancellationBoundaries(t *testing.T) {
 				t.Cleanup(func() { client.Close() })
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
+				baseline := 0
 				if afterRead {
-					client.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+					// v9 negotiates RESP once per connection; count business reads
+					// independently, while keeping before-cancel at zero I/O.
+					if err := client.Ping(context.Background()).Err(); err != nil {
+						t.Fatal(err)
+					}
+					baseline = server.CommandCount()
+					testutil.WrapRedisProcess(client, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 						return func(cmd redis.Cmder) error { err := next(cmd); cancel(); return err }
 					})
 				} else {
@@ -99,8 +107,8 @@ func TestCacheQueryCancellationBoundaries(t *testing.T) {
 				if afterRead {
 					want = 1
 				}
-				if server.CommandCount() != want {
-					t.Fatal("unexpected reads", server.CommandCount())
+				if server.CommandCount()-baseline != want {
+					t.Fatal("unexpected reads", server.CommandCount()-baseline)
 				}
 			})
 		}

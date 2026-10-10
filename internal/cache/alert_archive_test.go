@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"watchAlert/internal/models"
+	"watchAlert/internal/testutil"
 )
 
 func TestRecoveredDeleteHasSingleOwner(t *testing.T) {
@@ -53,7 +54,7 @@ func TestRecoveredDeleteDoesNotRemoveNewIncidentDuringCAS(t *testing.T) {
 	}
 	key := string(models.BuildAlertEventCacheKey("t", "fc"))
 	injected := false
-	c.rc.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(c.rc, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			if !injected && (cmd.Name() == "evalsha" || cmd.Name() == "eval") {
 				injected = true
@@ -118,7 +119,7 @@ func TestRecoveredDeleteReportsRedisFailureAndBoundsConflicts(t *testing.T) {
 	s.SetError("")
 	key := string(models.BuildAlertEventCacheKey("t", "fc"))
 	conflicts := 0
-	c.rc.WrapProcess(func(next func(redis.Cmder) error) func(redis.Cmder) error {
+	testutil.WrapRedisProcess(c.rc, func(next func(redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			if cmd.Name() == "evalsha" || cmd.Name() == "eval" {
 				conflicts++
